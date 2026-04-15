@@ -23,6 +23,9 @@ window.SupabaseService = (function () {
     let cachedTenantId = null;
     let cacheReady = false;
 
+    const QUERY_TIMEOUT_MS = 15000;
+    let _lastQueryId = {};
+
     /* ============================================================
        INIT
     ============================================================ */
@@ -212,6 +215,10 @@ window.SupabaseService = (function () {
             };
         }
 
+        const queryId = Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        const queryKey = table + ':' + (options.select || '*');
+        _lastQueryId[queryKey] = queryId;
+
         try {
             const wantsCount =
                 options.count === true ||
@@ -260,7 +267,37 @@ window.SupabaseService = (function () {
                 q = q.limit(options.limit);
             }
 
-            const result = await q;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(function () { controller.abort(); }, QUERY_TIMEOUT_MS);
+
+            let result;
+            try {
+                result = await Promise.race([
+                    q,
+                    new Promise(function (_, reject) {
+                        controller.signal.addEventListener('abort', function () {
+                            reject(new DOMException('Request timeout', 'AbortError'));
+                        });
+                    })
+                ]);
+            } finally {
+                clearTimeout(timeoutId);
+            }
+
+            if (_lastQueryId[queryKey] !== queryId) {
+                return {
+                    data: [],
+                    error: null,
+                    count: 0,
+                    page: 1,
+                    pageSize: 0,
+                    totalPages: 0,
+                    from: 0,
+                    to: 0,
+                    _stale: true
+                };
+            }
+
             const data = Array.isArray(result.data) ? result.data : [];
             const error = result.error || null;
             const count = Number.isFinite(result.count) ? result.count : data.length;
@@ -303,6 +340,19 @@ window.SupabaseService = (function () {
                 to: data.length
             };
         } catch (err) {
+            if (err && err.name === 'AbortError') {
+                return {
+                    data: [],
+                    error: 'Request timeout',
+                    count: 0,
+                    page: 1,
+                    pageSize: 0,
+                    totalPages: 0,
+                    from: 0,
+                    to: 0
+                };
+            }
+
             return {
                 data: [],
                 error: err?.message || err || 'Unknown query error',
@@ -377,64 +427,29 @@ window.SupabaseService = (function () {
     async function softDelete(table, id) {
         if (!client) return { data: null, error: 'Supabase not initialized' };
 
-        const tenantId = await getTenantId();
-        if (!tenantId) return { data: null, error: 'Tenant not found' };
+        try {
+            const { data, error } = await client.rpc('soft_delete_record', {
+                p_table: table,
+                p_id: id
+            });
 
-        const user = await getCurrentUser();
+            if (error) {
+                return {
+                    data: null,
+                    error: error.message || error
+                };
+            }
 
-        const { data: record, error: fetchError } = await client
-            .from(table)
-            .select('*')
-            .eq('id', id)
-            .eq('tenant_id', tenantId)
-            .single();
-
-        if (fetchError) {
+            return {
+                data: data,
+                error: null
+            };
+        } catch (err) {
             return {
                 data: null,
-                error: fetchError.message || fetchError
+                error: err?.message || 'Soft delete failed'
             };
         }
-
-        if (!record) {
-            return {
-                data: null,
-                error: 'Record not found'
-            };
-        }
-
-        const auditPayload = {
-            tenant_id: tenantId,
-            table_name: table,
-            record_id: id,
-            record_data: record,
-            deleted_by: user?.id || null
-        };
-
-        const { error: auditError } = await client
-            .from('deleted_records')
-            .insert(auditPayload);
-
-        if (auditError) {
-            return {
-                data: null,
-                error: auditError.message || auditError
-            };
-        }
-
-        const { error: deleteError } = await remove(table, id);
-
-        if (deleteError) {
-            return {
-                data: null,
-                error: deleteError.message || deleteError
-            };
-        }
-
-        return {
-            data: record,
-            error: null
-        };
     }
 
     /* ============================================================
@@ -459,6 +474,22 @@ window.SupabaseService = (function () {
         await client.auth.signOut();
     }
 
+    /* ============================================================
+       SYSTEM LOG — kritik hatalari DB'ye yaz
+       Asla ana islemi bloklama, fire-and-forget
+    ============================================================ */
+    function logEvent(action, status, message, metadata) {
+        if (!client) return;
+        try {
+            client.rpc('log_client_event', {
+                p_action: action || 'unknown',
+                p_status: status || 'info',
+                p_message: message || null,
+                p_metadata: metadata || {}
+            }).then(function () {}).catch(function () {});
+        } catch (e) { /* never block */ }
+    }
+
     return {
         init,
         getClient,
@@ -473,7 +504,8 @@ window.SupabaseService = (function () {
         remove,
         softDelete,
         signInWithEmail,
-        signOut
+        signOut,
+        logEvent
     };
 
 })();

@@ -31,9 +31,10 @@ window.AnalyticsService = {
     },
 
     iso(date) {
-        return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-            .toISOString()
-            .slice(0, 10);
+        var y = date.getFullYear();
+        var m = String(date.getMonth() + 1).padStart(2, '0');
+        var d = String(date.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + d;
     },
 
     today() {
@@ -155,7 +156,7 @@ window.AnalyticsService = {
 
     /**
      * product_sales satırlarını ürün bazında gruplar.
-     * Hem getProductPerformanceSummary hem getDashboardAnalytics kullanır.
+     * getProductPerformanceSummary tarafından kullanılır.
      */
     groupProductPerformance(rows) {
         var grouped = {};
@@ -315,7 +316,7 @@ window.AnalyticsService = {
     change(current, previous) {
         if (previous === 0) {
             if (current === 0) return 0;
-            return 100;
+            return null;
         }
         return ((current - previous) / Math.abs(previous)) * 100;
     },
@@ -556,9 +557,12 @@ window.AnalyticsService = {
 
     /* ============================================================
        MAIN — getDashboardAnalytics()
+       Tek RPC call ile tüm aggregation DB seviyesinde yapılır.
+       10+ ayrı sorgu yerine 1 RPC.
     ============================================================ */
 
     async getDashboardAnalytics() {
+        var self = this;
         var now = new Date();
 
         var start = this.monthStart(now);
@@ -570,71 +574,55 @@ window.AnalyticsService = {
         var prevStart = this.monthStart(prev);
         var prevEnd = this.monthEnd(prev);
 
-        var results = await Promise.all([
-            this.getMonthlySalesRange(start, end),          // 0
-            this.getMonthlySalesRange(prevStart, prevEnd),   // 1
-            this.getMonthlyExpensesRange(start, end),        // 2
-            this.getMonthlyExpensesRange(prevStart, prevEnd),// 3
-            this.getProductSalesRange(start, end),           // 4 (products join aşağıda)
-            this.getProductSalesRange(prevStart, prevEnd),   // 5
-            this.getWeeklySales(),                           // 6
-            this.getTasksTodayCount(),                       // 7
-            this.getAllTasks(),                               // 8
-            this.getProductPerformanceSummary(start, end)     // 9
-        ]);
-
-        var sales = results[0].data || [];
-        var salesP = results[1].data || [];
-        var expenses = results[2].data || [];
-        var expensesP = results[3].data || [];
-        var rawProductSalesRows = results[4].data || [];
-        var rawProductSalesRowsPrev = results[5].data || [];
-        var weeklySales = results[6] || [];
-        var tasksToday = results[7] || 0;
-        var allTasks = results[8] || [];
-        var productSalesData = results[9] || [];
-
-        // Aktif satış ID'leri — sales sorgusu zaten is_deleted=false filtreli
-        var validSaleIds = {};
-        sales.forEach(function (s) { if (s.id) validSaleIds[s.id] = true; });
-        var validSaleIdsPrev = {};
-        salesP.forEach(function (s) { if (s.id) validSaleIdsPrev[s.id] = true; });
-
-        // product_sales → sadece aktif satışlara ait olanlar
-        var productSalesRows = this.filterByActiveSales(rawProductSalesRows, validSaleIds);
-        var productSalesRowsPrev = this.filterByActiveSales(rawProductSalesRowsPrev, validSaleIdsPrev);
-
         var today = this.today();
         var yesterday = this.yesterday();
 
-        // AYLIK
-        var monthlyRevenue = this.sum(sales, 'total');
-        var monthlyExpenseOnly = this.sum(expenses, 'amount');
-        var monthlyProductCost = this.sumProductCost(productSalesRows);
+        var weekStartDate = new Date();
+        weekStartDate.setDate(weekStartDate.getDate() - 6);
+        var weekStart = this.iso(weekStartDate);
+
+        // === SINGLE RPC — tüm aggregation DB'de ===
+        var res = await this.client().rpc('get_dashboard_analytics', {
+            p_tenant_id: this.tenantId(),
+            p_current_start: start,
+            p_current_end: end,
+            p_prev_start: prevStart,
+            p_prev_end: prevEnd,
+            p_today: today,
+            p_yesterday: yesterday,
+            p_week_start: weekStart
+        });
+
+        this.assertResponse(res, 'Dashboard verisi alınamadı');
+
+        var d = res.data || {};
+
+        // === PARSE AGGREGATED VALUES ===
+        var monthlyRevenue = Number(d.monthly_revenue || 0);
+        var monthlyExpenseOnly = Number(d.monthly_expense || 0);
+        var monthlyProductCost = Number(d.monthly_product_cost || 0);
         var monthlyTotalExpense = monthlyExpenseOnly + monthlyProductCost;
         var monthlyProfit = monthlyRevenue - monthlyTotalExpense;
 
-        // ÖNCEKİ AY
-        var prevRevenue = this.sum(salesP, 'total');
-        var prevExpenseOnly = this.sum(expensesP, 'amount');
-        var prevProductCost = this.sumProductCost(productSalesRowsPrev);
+        var prevRevenue = Number(d.prev_revenue || 0);
+        var prevExpenseOnly = Number(d.prev_expense || 0);
+        var prevProductCost = Number(d.prev_product_cost || 0);
         var prevTotalExpense = prevExpenseOnly + prevProductCost;
         var prevProfit = prevRevenue - prevTotalExpense;
 
-        // GÜNLÜK
-        var todaySales = this.sumDate(sales, today, 'total');
-        var todayExpenseOnly = this.sumDate(expenses, today, 'amount');
-        var todayProductCost = this.sumProductCostDate(productSalesRows, today);
+        var todaySales = Number(d.today_revenue || 0);
+        var todayExpenseOnly = Number(d.today_expense || 0);
+        var todayProductCost = Number(d.today_product_cost || 0);
         var todayTotalExpense = todayExpenseOnly + todayProductCost;
         var todayProfit = todaySales - todayTotalExpense;
 
-        // DÜN
-        var yesterdaySales = this.sumDate(sales, yesterday, 'total') + this.sumDate(salesP, yesterday, 'total');
-        var yesterdayExpenseOnly = this.sumDate(expenses, yesterday, 'amount') + this.sumDate(expensesP, yesterday, 'amount');
-        var yesterdayProductCost = this.sumProductCostDate(productSalesRows, yesterday) + this.sumProductCostDate(productSalesRowsPrev, yesterday);
+        var yesterdaySales = Number(d.yesterday_revenue || 0);
+        var yesterdayExpenseOnly = Number(d.yesterday_expense || 0);
+        var yesterdayProductCost = Number(d.yesterday_product_cost || 0);
         var yesterdayTotalExpense = yesterdayExpenseOnly + yesterdayProductCost;
         var yesterdayProfit = yesterdaySales - yesterdayTotalExpense;
 
+        // === CHANGE CALCULATIONS ===
         var monthlyRevenueChange = this.change(monthlyRevenue, prevRevenue);
         var monthlyExpenseChange = this.change(monthlyTotalExpense, prevTotalExpense);
         var monthlyProfitChange = this.change(monthlyProfit, prevProfit);
@@ -643,8 +631,50 @@ window.AnalyticsService = {
         var dailyExpenseChange = this.change(todayTotalExpense, yesterdayTotalExpense);
         var dailyProfitChange = this.change(todayProfit, yesterdayProfit);
 
-        var expenseCategories = this.buildExpenseCategories(expenses);
-        var topProducts = this.buildTopProducts(productSalesData);
+        // === WEEKLY SALES (fill missing days) ===
+        var weekMap = {};
+        (d.weekly_sales || []).forEach(function (w) {
+            weekMap[w.date] = Number(w.amount || 0);
+        });
+
+        var dayLabels = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+        var weeklySales = [];
+        for (var i = 6; i >= 0; i--) {
+            var wd = new Date();
+            wd.setDate(wd.getDate() - i);
+            var wiso = self.iso(wd);
+            weeklySales.push({
+                day: dayLabels[wd.getDay()],
+                amount: Number(weekMap[wiso] || 0),
+                date: wiso
+            });
+        }
+
+        // === EXPENSE CATEGORIES (already grouped by DB) ===
+        var expenseCategories = (d.expense_categories || []).map(function (c) {
+            return {
+                name: c.name || 'Diğer',
+                color: c.color || '#9CA3AF',
+                amount: Number(c.amount || 0)
+            };
+        });
+
+        // === TOP PRODUCTS (already grouped & limited by DB) ===
+        var topProducts = (d.top_products || []).map(function (item, index) {
+            return {
+                rank: index + 1,
+                name: item.name || 'Bilinmeyen Ürün',
+                sales: Number(item.quantity || 0),
+                revenue: Number(item.revenue || 0),
+                profit: Number(item.estimated_profit || 0)
+            };
+        });
+
+        // === TASKS ===
+        var tasksToday = Number(d.tasks_today_count || 0);
+        var allTasks = d.all_tasks || [];
+
+        // === ALERTS, ANALYSIS, HEALTH SCORE ===
         var averageWeeklySales = this.average(
             weeklySales.map(function (s) { return s.amount; })
         );

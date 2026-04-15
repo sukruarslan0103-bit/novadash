@@ -8,6 +8,8 @@ window.ProductsView = {
     filteredProducts: [],
     performanceMap: new Map(),
     editingId: null,
+    _listeners: [],
+    _isActive: false,
 
     filters: {
         search: '',
@@ -34,11 +36,16 @@ window.ProductsView = {
     },
 
     async render(container) {
+        this._isActive = true;
+
         container.innerHTML = `
             <div class="page-header">
                 <h2 class="page-title">Ürünler</h2>
                 <button class="btn btn-primary" onclick="window.ProductsView.toggleForm()">
                     + Yeni Ürün Ekle
+                </button>
+				<button class="btn btn-secondary" id="openPurchaseModal">
+                    + Alış Gir
                 </button>
             </div>
 
@@ -219,7 +226,17 @@ window.ProductsView = {
         `;
 
         await this.loadCategories();
+        if (!this._isActive) return;
         await this.loadProducts();
+        if (!this._isActive) return;
+        this.initPurchase();
+
+        var self = this;
+        this._on(window, 'products:updated', async function () {
+            if (!self._isActive) return;
+            await self.loadProducts();
+            if (!self._isActive) return;
+        });
     },
 
     toggleForm: function (forceOpen) {
@@ -258,10 +275,10 @@ window.ProductsView = {
                 ],
                 order: { column: 'name', asc: true }
             });
+            if (!this._isActive) return;
 
             if (result.error) {
                 this.categories = [];
-
                 if (select) select.innerHTML = '<option value="">Kategori yüklenemedi</option>';
                 if (filterSelect) filterSelect.innerHTML = '<option value="">Tüm kategoriler</option>';
                 return;
@@ -269,16 +286,22 @@ window.ProductsView = {
 
             this.categories = Array.isArray(result.data) ? result.data : [];
 
+            if (this.categories.length === 0) {
+                if (select) select.innerHTML = '<option value="">Henuz kategori yok — once kategori olustur</option>';
+                if (filterSelect) filterSelect.innerHTML = '<option value="">Tum kategoriler</option>';
+                return;
+            }
+
             var optionsHtml = this.categories.map(function (category) {
                 return '<option value="' + window.ProductsView.escapeHtml(category.id) + '">' + window.ProductsView.escapeHtml(category.name) + '</option>';
             }).join('');
 
             if (select) {
-                select.innerHTML = '<option value="">Seçiniz</option>' + optionsHtml;
+                select.innerHTML = '<option value="">Seciniz</option>' + optionsHtml;
             }
 
             if (filterSelect) {
-                filterSelect.innerHTML = '<option value="">Tüm kategoriler</option>' + optionsHtml;
+                filterSelect.innerHTML = '<option value="">Tum kategoriler</option>' + optionsHtml;
             }
         } catch (error) {
             this.categories = [];
@@ -304,6 +327,7 @@ window.ProductsView = {
                     ? window.ProductsService.getPerformanceSummary()
                     : Promise.resolve({ data: [], error: null })
             ]);
+            if (!this._isActive) return;
 
             var productResult = results[0];
             var performanceResult = results[1];
@@ -376,7 +400,7 @@ window.ProductsView = {
         tbody.innerHTML = pageRows.map(function (product) {
             var metrics = window.ProductsView.getProductMetrics(product);
             var name = window.ProductsView.escapeHtml(product.name || '-');
-            var category = window.ProductsView.escapeHtml(window.ProductsView.getCategoryLabel(product.category_id));
+            var category = window.ProductsView.escapeHtml(window.ProductsView.getCategoryLabel(product.category_id, product));
             var price = window.ProductsView.formatMoney(product.price);
             var cost = window.ProductsView.formatMoney(product.cost);
 
@@ -631,6 +655,7 @@ window.ProductsView = {
                 };
 
                 var result = await window.SupabaseService.insert('categories', payload);
+                if (!window.ProductsView._isActive) return false;
 
                 if (result.error) {
                     window.ProductsView.setModalError(window.ProductsView.getErrorMessage(result.error, 'Kategori eklenemedi.'));
@@ -638,6 +663,7 @@ window.ProductsView = {
                 }
 
                 await window.ProductsView.loadCategories();
+                if (!window.ProductsView._isActive) return false;
                 window.ProductsView.setStatus('"' + cleanedName + '" kategorisi eklendi.', 'success');
                 return true;
             }
@@ -670,6 +696,7 @@ window.ProductsView = {
                 var result = await window.ProductsService.update(product.id, {
                     is_active: nextValue
                 });
+                if (!window.ProductsView._isActive) return false;
 
                 if (result.error) {
                     window.ProductsView.setModalError(window.ProductsView.getErrorMessage(result.error, 'Ürün durumu güncellenemedi.'));
@@ -677,6 +704,7 @@ window.ProductsView = {
                 }
 
                 await window.ProductsView.loadProducts();
+                if (!window.ProductsView._isActive) return false;
                 window.ProductsView.setStatus('"' + product.name + '" durumu güncellendi.', 'success');
                 return true;
             }
@@ -701,6 +729,7 @@ window.ProductsView = {
             cancelText: 'Vazgeç',
             onConfirm: async function () {
                 var result = await window.SupabaseService.softDelete('products', product.id);
+                if (!window.ProductsView._isActive) return false;
 
                 if (result.error) {
                     window.ProductsView.setModalError(window.ProductsView.getErrorMessage(result.error, 'Ürün silinemedi.'));
@@ -708,6 +737,7 @@ window.ProductsView = {
                 }
 
                 await window.ProductsView.loadProducts();
+                if (!window.ProductsView._isActive) return false;
                 window.ProductsView.setStatus('"' + product.name + '" soft delete ile kaldırıldı.', 'success');
                 return true;
             }
@@ -812,6 +842,7 @@ window.ProductsView = {
             var result = await this.modalState.onConfirm(
                 this.modalState.type === 'input' ? (input ? input.value : '') : null
             );
+            if (!this._isActive) return;
 
             if (result === true) {
                 this.closeModal();
@@ -863,9 +894,19 @@ window.ProductsView = {
     },
 
     save: async function () {
+        if (!this.categories || this.categories.length === 0) {
+            this.setStatus('Kategori yukleniyor, lutfen bekleyin...', 'error');
+            return;
+        }
+
+        var categoryEl = document.getElementById('productCategory');
+        var categoryId = categoryEl ? (categoryEl.value || null) : null;
+        var selectedCat = (this.categories || []).find(function (c) { return c.id === categoryId; });
+
         var payload = {
             name: document.getElementById('productName') ? document.getElementById('productName').value.trim() : '',
-            category_id: document.getElementById('productCategory') ? (document.getElementById('productCategory').value || null) : null,
+            category_id: categoryId,
+            category_name: selectedCat ? selectedCat.name : null,
             price: parseFloat(document.getElementById('productPrice') ? document.getElementById('productPrice').value : 0) || 0
         };
 
@@ -909,6 +950,7 @@ window.ProductsView = {
         } else {
             response = await window.ProductsService.create(payload);
         }
+        if (!this._isActive) return;
 
         if (response && response.error) {
             this.setStatus(this.getErrorMessage(response.error, 'Ürün kaydedilemedi.'), 'error');
@@ -921,6 +963,7 @@ window.ProductsView = {
         this.setFormTitle();
         this.toggleForm(false);
         await this.loadProducts();
+        if (!this._isActive) return;
     },
 
     clearForm: function () {
@@ -935,12 +978,14 @@ window.ProductsView = {
         if (costInfo) costInfo.value = 'Fatura / satın alma verisinden gelir';
     },
 
-    getCategoryLabel: function (categoryId) {
+    getCategoryLabel: function (categoryId, product) {
         if (!categoryId) return '-';
         var found = this.categories.find(function (item) {
             return String(item.id) === String(categoryId);
         });
-        return found && found.name ? found.name : '-';
+        if (found && found.name) return found.name;
+        if (product && product.category_name) return product.category_name;
+        return '-';
     },
 
     getMarginAmountValue: function (product) {
@@ -1032,6 +1077,175 @@ window.ProductsView = {
         }
 
         el.innerHTML = '<div style="padding:14px 16px; border-radius:14px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:14px; font-weight:600;">' + this.escapeHtml(message) + '</div>';
+    },
+
+    _on: function (el, event, fn) {
+        if (!el) return;
+        el.addEventListener(event, fn);
+        this._listeners.push({ el: el, event: event, fn: fn });
+    },
+
+    _removeAllListeners: function () {
+        for (var i = 0; i < this._listeners.length; i++) {
+            var l = this._listeners[i];
+            l.el.removeEventListener(l.event, l.fn);
+        }
+        this._listeners = [];
+    },
+
+    destroy: function () {
+        this._isActive = false;
+        this._removeAllListeners();
+        this.products = [];
+        this.filteredProducts = [];
+        this.categories = [];
+        this.performanceMap = new Map();
+        this.editingId = null;
+    },
+
+    initPurchase: function () {
+        var self = this;
+
+        var modal = document.getElementById('purchaseModal');
+        var btnOpen = document.getElementById('openPurchaseModal');
+
+        if (!modal || !btnOpen) return;
+
+        var productSelect = document.getElementById('purchaseProduct');
+        var qtyInput = document.getElementById('purchaseQty');
+        var unitInput = document.getElementById('purchaseUnit');
+        var totalInput = document.getElementById('purchaseTotal');
+        var vatSelect = document.getElementById('purchaseVat');
+
+        var btnSave = document.getElementById('purchaseSave');
+        var btnClose = document.getElementById('purchaseClose');
+
+        this._on(btnOpen, 'click', async function () {
+            self.currentPurchaseKey = crypto.randomUUID();
+            modal.style.display = 'flex';
+
+            var res = await window.SupabaseService.query('products', {
+                filters: [
+                    { op: 'eq', column: 'is_active', value: true }
+                ],
+                select: 'id,name'
+            });
+            if (!self._isActive) return;
+
+            if (productSelect) {
+                productSelect.innerHTML = '';
+
+                ((res && res.data) || []).forEach(function (p) {
+                    var opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    productSelect.appendChild(opt);
+                });
+            }
+        });
+
+        this._on(btnClose, 'click', function () {
+            modal.style.display = 'none';
+            self.currentPurchaseKey = null;
+            qtyInput.value = '';
+            unitInput.value = '';
+            totalInput.value = '';
+            updateSummary();
+        });
+
+        var summarySubtotal = document.getElementById('purchaseSummarySubtotal');
+        var summaryVat = document.getElementById('purchaseSummaryVat');
+        var summaryTotal = document.getElementById('purchaseSummaryTotal');
+
+        function updateSummary() {
+            var qty = Number(qtyInput.value) || 0;
+            var unit = Number(unitInput.value) || 0;
+            var total = Number(totalInput.value) || 0;
+            var vat = Number(vatSelect.value) || 0;
+
+            var subtotal = (qty > 0 && unit > 0) ? (qty * unit) : total;
+            var vatAmount = subtotal * (vat / 100);
+            var grandTotal = subtotal + vatAmount;
+
+            if (summarySubtotal) summarySubtotal.textContent = subtotal.toFixed(2) + ' TL';
+            if (summaryVat) summaryVat.textContent = vatAmount.toFixed(2) + ' TL';
+            if (summaryTotal) summaryTotal.textContent = grandTotal.toFixed(2) + ' TL';
+        }
+
+        function recalculate(source) {
+            var qty = Number(qtyInput.value) || 0;
+            var unit = Number(unitInput.value) || 0;
+            var total = Number(totalInput.value) || 0;
+
+            if (source === 'total' && qty > 0 && total > 0) {
+                unitInput.value = (total / qty).toFixed(2);
+            } else if (source === 'unit' && qty > 0 && unit > 0) {
+                totalInput.value = (unit * qty).toFixed(2);
+            } else if (source === 'qty') {
+                if (unit > 0) {
+                    totalInput.value = (unit * qty).toFixed(2);
+                } else if (total > 0 && qty > 0) {
+                    unitInput.value = (total / qty).toFixed(2);
+                }
+            }
+
+            updateSummary();
+        }
+
+        this._on(qtyInput, 'input', function () { recalculate('qty'); });
+        this._on(unitInput, 'input', function () { recalculate('unit'); });
+        this._on(totalInput, 'input', function () { recalculate('total'); });
+        this._on(vatSelect, 'change', function () { updateSummary(); });
+
+        var saving = false;
+
+        this._on(btnSave, 'click', async function () {
+            if (saving) return;
+
+            var qty = Number(qtyInput.value);
+            var total = Number(totalInput.value);
+
+            if (isNaN(qty) || isNaN(total) || qty <= 0 || total <= 0) {
+                window.ProductsView.setStatus('Lutfen gecerli sayisal degerler girin.', 'error');
+                return;
+            }
+
+            if (!productSelect.value) {
+                window.ProductsView.setStatus('Lutfen bir urun secin.', 'error');
+                return;
+            }
+
+            saving = true;
+            btnSave.disabled = true;
+            btnSave.textContent = 'Kaydediliyor...';
+
+            try {
+                await window.PurchasesService.createPurchase({
+                    product_id: productSelect.value,
+                    quantity: qty,
+                    total_price: total,
+                    vat_rate: vatSelect.value,
+                    idempotency_key: self.currentPurchaseKey
+                });
+                if (!self._isActive) return;
+
+                self.currentPurchaseKey = null;
+                window.ProductsView.setStatus('Alis kaydedildi.', 'success');
+                modal.style.display = 'none';
+
+                qtyInput.value = '';
+                unitInput.value = '';
+                totalInput.value = '';
+                updateSummary();
+            } catch (err) {
+                if (!self._isActive) return;
+                window.ProductsView.setStatus('Kayit hatasi: ' + (err && err.message ? err.message : 'Bilinmeyen hata'), 'error');
+            } finally {
+                saving = false;
+                btnSave.disabled = false;
+                btnSave.textContent = 'Kaydet';
+            }
+        });
     },
 
     escapeHtml: function (value) {

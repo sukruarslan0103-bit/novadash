@@ -4,6 +4,8 @@
    FIX: her import = yeni sale
    FIX: sale_id baglantisi korunur
    FIX: "Toplam Satis Tutari" satir toplami olarak ele alinir
+   FIX: deterministic idempotency key eklendi
+   FIX: duplicate durumda false success engellendi
    ============================================================ */
 
 window.ImportExport = (function () {
@@ -119,6 +121,46 @@ window.ImportExport = (function () {
         return Number.isFinite(number) ? number : NaN;
     }
 
+    function hashString(value) {
+        const text = String(value || '');
+        let hash = 2166136261;
+
+        for (let i = 0; i < text.length; i += 1) {
+            hash ^= text.charCodeAt(i);
+            hash +=
+                (hash << 1) +
+                (hash << 4) +
+                (hash << 7) +
+                (hash << 8) +
+                (hash << 24);
+        }
+
+        return (hash >>> 0).toString(16).padStart(8, '0');
+    }
+
+    function buildDeterministicDayKey(isoDate, dayRows, tenantId) {
+        const normalizedRows = dayRows
+            .map(row => ({
+                urun: normalizeProductName(row.urun),
+                adet: Number(row.adetNumber),
+                unitPrice: Number(row.unitPrice).toFixed(4),
+                total: Number(row.rowTotal).toFixed(4)
+            }))
+            .sort((a, b) => {
+                const left = `${a.urun}|${a.adet}|${a.unitPrice}|${a.total}`;
+                const right = `${b.urun}|${b.adet}|${b.unitPrice}|${b.total}`;
+                return left.localeCompare(right, 'tr');
+            });
+
+        const payload = JSON.stringify({
+            tenantId: String(tenantId || ''),
+            date: isoDate,
+            rows: normalizedRows
+        });
+
+        return `import_${isoDate}_${hashString(payload)}`;
+    }
+
     function normalizeRows(rows) {
         if (!Array.isArray(rows) || !rows.length) return [];
 
@@ -226,11 +268,20 @@ window.ImportExport = (function () {
             });
 
             const parsedRows = normalizeRows(rows);
+            const MAX_IMPORT_ROWS = 400;
 
             if (!parsedRows.length) {
                 return {
                     ok: false,
                     message: 'Dosya boş veya uygun formatta değil. Beklenen kolonlar: Tarih, Ürün Adı, Adet, Toplam Satış Tutarı'
+                };
+            }
+
+            if (parsedRows.length > MAX_IMPORT_ROWS) {
+                return {
+                    ok: false,
+                    code: 'IMPORT_LIMIT_EXCEEDED',
+                    message: `Dosya çok büyük (${parsedRows.length} satır). Maksimum ${MAX_IMPORT_ROWS} satır yükleyebilirsiniz.`
                 };
             }
 
@@ -334,7 +385,7 @@ window.ImportExport = (function () {
         };
     }
 
-    async function importSalesRows(rows, productMap) {
+    async function importSalesRows(rows, productMap, importSessionKey) {
         if (!Array.isArray(rows) || !rows.length) {
             return { ok: false, message: 'Aktarılacak geçerli veri bulunamadı.' };
         }
@@ -364,7 +415,6 @@ window.ImportExport = (function () {
             return { ok: false, message: 'Supabase bağlantısı veya tenant bilgisi alınamadı.' };
         }
 
-        // Tüm günleri tek batch olarak hazırla
         const salesBatch = [];
         let totalProducts = 0;
 
@@ -385,9 +435,11 @@ window.ImportExport = (function () {
                     quantity: row.adetNumber,
                     unit_price: row.unitPrice,
                     total: row.rowTotal,
-                    cost: Number(productInfo.cost) || 0  // birim maliyet
+                    cost: Number(productInfo.cost) || 0
                 });
             }
+
+            const deterministicKey = buildDeterministicDayKey(date, dayRows, tenantId);
 
             salesBatch.push({
                 date: date,
@@ -395,13 +447,14 @@ window.ImportExport = (function () {
                 cash: 0,
                 card: 0,
                 notes: 'Aktarma ekranından oluşturuldu',
-                products: products
+                products: products,
+                idempotency_key: deterministicKey,
+                import_session_key: importSessionKey || null
             });
 
             totalProducts += products.length;
         }
 
-        // 🔥 ATOMIC: tüm günler tek transaction
         try {
             const { data, error } = await client.rpc('create_sales_atomic', {
                 p_tenant_id: tenantId,
@@ -412,7 +465,22 @@ window.ImportExport = (function () {
                 return { ok: false, message: error.message || 'Toplu satış kaydı oluşturulamadı.' };
             }
 
-            return { ok: true, importedCount: totalProducts };
+            if (!Array.isArray(data) || data.length === 0) {
+                return { ok: false, message: 'Bu veri zaten daha önce aktarılmış. Yeni kayıt oluşturulmadı.' };
+            }
+
+            let actualImportedProducts = 0;
+
+            for (const sale of data) {
+                const productSales = Array.isArray(sale?.product_sales) ? sale.product_sales : [];
+                actualImportedProducts += productSales.length;
+            }
+
+            if (actualImportedProducts === 0) {
+                return { ok: false, message: 'Bu veri zaten daha önce aktarılmış. Yeni kayıt oluşturulmadı.' };
+            }
+
+            return { ok: true, importedCount: actualImportedProducts };
         } catch (err) {
             return { ok: false, message: err?.message || 'Aktarım sırasında beklenmeyen hata oluştu.' };
         }
@@ -447,6 +515,34 @@ window.ImportExport = (function () {
         }
     }
 
+    async function restoreFromBackup(backupData, productMap) {
+        if (!backupData || !Array.isArray(backupData.sales)) {
+            return { ok: false, message: 'Geçersiz backup dosyası.' };
+        }
+
+        const rows = [];
+
+        for (const sale of backupData.sales) {
+            if (!sale.date || !Array.isArray(sale.product_sales)) continue;
+
+            for (const item of sale.product_sales) {
+                rows.push({
+                    tarih: sale.date,
+                    urun: item.product_name || '',
+                    adet: item.quantity,
+                    tutar: item.total
+                });
+            }
+        }
+
+        if (!rows.length) {
+            return { ok: false, message: 'Backup içinde geçerli veri yok.' };
+        }
+
+        // mevcut import pipeline kullan
+        return await importSalesRows(rows, productMap, 'restore_session');
+    }
+
     return {
         escapeHtml,
         normalizeProductName,
@@ -455,6 +551,7 @@ window.ImportExport = (function () {
         loadActiveProducts,
         validateRowsAgainstProducts,
         importSalesRows,
-        createSalesTemplate
+        createSalesTemplate,
+        restoreFromBackup
     };
 })();

@@ -3,12 +3,14 @@
    DB-driven | Date filter | Pagination | Daily/Monthly
    Detail modal | Single + bulk Excel export
    FIXED: sale bazlı maliyet / detay / tekil export
+   CACHE: ViewCache entegrasyonu eklendi
    ============================================================ */
 
 window.SalesView = {
     salesData: [],
     productSalesData: [],
     productsMap: new Map(),
+    _costMap: new Map(),
     currentPage: 1,
     pageSize: 10,
     totalCount: 0,
@@ -16,12 +18,24 @@ window.SalesView = {
     viewMode: 'daily',
     filterStart: '',
     filterEnd: '',
+    _eventsBound: false,
+    _lastFetchKey: '',
+    _salesUpdatedHandler: null,
+    _listeners: [],
+    _isActive: false,
 
     async render(container) {
+        this._isActive = true;
+
         const fmt = window.Formatters;
         if (!this.filterStart) this.filterStart = fmt.monthStart();
         if (!this.filterEnd) this.filterEnd = fmt.today();
         this.currentPage = 1;
+        this._eventsBound = false;
+        this._lastFetchKey = '';
+        this.salesData = [];
+        this.productSalesData = [];
+        this._costMap = new Map();
 
         container.innerHTML = `
             <section class="sales-page">
@@ -150,33 +164,158 @@ window.SalesView = {
         `;
 
         this.bindEvents();
-        await this.loadData();
+        await this.loadData(true);
+        if (!this._isActive) return;
+    },
+
+    _on(el, event, fn) {
+        if (!el) return;
+        el.addEventListener(event, fn);
+        this._listeners.push({ el: el, event: event, fn: fn });
+    },
+
+    _removeAllListeners() {
+        for (var i = 0; i < this._listeners.length; i++) {
+            var l = this._listeners[i];
+            l.el.removeEventListener(l.event, l.fn);
+        }
+        this._listeners = [];
+    },
+
+    destroy() {
+        this._isActive = false;
+        this._removeAllListeners();
+        this._eventsBound = false;
+        this._salesUpdatedHandler = null;
+        this._lastFetchKey = '';
+        this.salesData = [];
+        this.productSalesData = [];
+        this._costMap = new Map();
     },
 
     bindEvents() {
-        const filterBtn = document.getElementById('salesFilterBtn');
-        const clearBtn = document.getElementById('salesClearBtn');
-        const switchDaily = document.getElementById('switchDaily');
-        const switchMonthly = document.getElementById('switchMonthly');
-        const bulkExport = document.getElementById('salesBulkExportBtn');
-        const modalClose = document.getElementById('modalCloseBtn');
-        const modal = document.getElementById('salesDetailModal');
+        this._removeAllListeners();
+        this._eventsBound = true;
 
-        if (filterBtn) filterBtn.addEventListener('click', () => this.applyFilter());
-        if (clearBtn) clearBtn.addEventListener('click', () => this.clearFilter());
-        if (switchDaily) switchDaily.addEventListener('click', () => this.setViewMode('daily'));
-        if (switchMonthly) switchMonthly.addEventListener('click', () => this.setViewMode('monthly'));
-        if (bulkExport) bulkExport.addEventListener('click', () => this.exportBulkExcel());
+        var self = this;
+        var debouncedFilter = window.debounce(function () { self.applyFilter(); }, 300);
 
-        if (modalClose) modalClose.addEventListener('click', () => this.closeModal());
-        if (modal) modal.addEventListener('click', (e) => {
-            if (e.target === modal) this.closeModal();
+        var filterBtn = document.getElementById('salesFilterBtn');
+        var clearBtn = document.getElementById('salesClearBtn');
+        var switchDaily = document.getElementById('switchDaily');
+        var switchMonthly = document.getElementById('switchMonthly');
+        var bulkExport = document.getElementById('salesBulkExportBtn');
+        var modalClose = document.getElementById('modalCloseBtn');
+        var modal = document.getElementById('salesDetailModal');
+
+        this._on(filterBtn, 'click', debouncedFilter);
+        this._on(clearBtn, 'click', function () { self.clearFilter(); });
+        this._on(switchDaily, 'click', function () { self.setViewMode('daily'); });
+        this._on(switchMonthly, 'click', function () { self.setViewMode('monthly'); });
+        this._on(bulkExport, 'click', function () { self.exportBulkExcel(); });
+        this._on(modalClose, 'click', function () { self.closeModal(); });
+        this._on(modal, 'click', function (e) {
+            if (e.target === modal) self.closeModal();
+        });
+
+        this._salesUpdatedHandler = function () {
+            self._lastFetchKey = '';
+            self.salesData = [];
+            self.productSalesData = [];
+            self._costMap = new Map();
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:' + self._getTenantId());
+            }
+            self.loadData(true);
+        };
+
+        this._on(window, 'sales:updated', this._salesUpdatedHandler);
+    },
+
+    _getTenantId() {
+        return (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+    },
+
+    _buildFetchKey() {
+        var tenantId = this._getTenantId();
+        return 'sales:' + tenantId + ':' + this.filterStart + ':' + this.filterEnd + ':' +
+               this.viewMode + ':' + this.currentPage + ':' + this.pageSize;
+    },
+
+    _buildProductsCacheKey() {
+        return 'sales:products:' + this._getTenantId();
+    },
+
+    _rebuildCostMap() {
+        this._costMap = new Map();
+
+        for (const ps of this.productSalesData) {
+            const saleId = ps.sale_id;
+            if (!saleId) continue;
+
+            const prev = this._costMap.get(saleId) || 0;
+            const cost = (Number(ps.quantity) || 0) * (Number(ps.cost) || 0);
+            this._costMap.set(saleId, prev + cost);
+        }
+    },
+
+    _applyCachedPayload(payload, fetchKey) {
+        this.salesData = Array.isArray(payload.salesData) ? payload.salesData : [];
+        this.productSalesData = Array.isArray(payload.productSalesData) ? payload.productSalesData : [];
+        this.totalCount = payload.totalCount || this.salesData.length || 0;
+        this.totalPages = payload.totalPages || 1;
+        this._lastFetchKey = fetchKey;
+        this._rebuildCostMap();
+    },
+
+    _saveToCache(fetchKey) {
+        if (!window.ViewCache) return;
+
+        window.ViewCache.set(fetchKey, {
+            salesData: this.salesData,
+            productSalesData: this.productSalesData,
+            totalCount: this.totalCount,
+            totalPages: this.totalPages
         });
     },
 
-    async loadData() {
+    async loadData(forceRefresh) {
+        var fetchKey = this._buildFetchKey();
+
+        // Aynı oturum içinde tekrar render
+        if (false && !forceRefresh && fetchKey === this._lastFetchKey && this.salesData.length > 0) {
+            this.renderSummary();
+            this.renderTable();
+            if (this.totalCount > 0) {
+                this.setStatus(this.totalCount + ' satış kaydı bulundu.', 'success');
+            } else {
+                this.setStatus('Seçili tarih aralığında satış kaydı bulunamadı.', 'info');
+            }
+            return;
+        }
+
+        // Gerçek cache kontrolü
+        if (!forceRefresh && window.ViewCache) {
+            var cached = window.ViewCache.get(fetchKey);
+            if (cached) {
+                await this.loadProducts();
+                if (!this._isActive) return;
+                this._applyCachedPayload(cached, fetchKey);
+                this.renderSummary();
+                this.renderTable();
+
+                if (this.totalCount > 0) {
+                    this.setStatus(this.totalCount + ' satış kaydı bulundu.', 'success');
+                } else {
+                    this.setStatus('Seçili tarih aralığında satış kaydı bulunamadı.', 'info');
+                }
+                return;
+            }
+        }
+
         try {
             await this.loadProducts();
+            if (!this._isActive) return;
 
             var result;
 
@@ -191,10 +330,14 @@ window.SalesView = {
                 );
             }
 
+            if (!this._isActive) return;
+
             if (result.error) {
                 this.salesData = [];
+                this.productSalesData = [];
                 this.totalCount = 0;
                 this.totalPages = 0;
+                this._costMap = new Map();
                 this.setStatus(this.getErrorMessage(result.error, 'Satış verileri yüklenemedi.'), 'error');
                 this.renderTable();
                 return;
@@ -210,6 +353,13 @@ window.SalesView = {
                 await this.loadProductSales();
             }
 
+            if (!this._isActive) return;
+
+            this._rebuildCostMap();
+
+            this._lastFetchKey = fetchKey;
+            this._saveToCache(fetchKey);
+
             this.renderSummary();
             this.renderTable();
 
@@ -221,8 +371,10 @@ window.SalesView = {
         } catch (err) {
             console.error('Sales load error:', err);
             this.salesData = [];
+            this.productSalesData = [];
             this.totalCount = 0;
             this.totalPages = 0;
+            this._costMap = new Map();
             this.setStatus('Satışlar yüklenirken beklenmeyen hata oluştu.', 'error');
             this.renderTable();
         }
@@ -231,18 +383,51 @@ window.SalesView = {
     async loadProducts() {
         this.productsMap = new Map();
 
+        var cacheKey = this._buildProductsCacheKey();
+
+        if (window.ViewCache) {
+            var cachedProducts = window.ViewCache.get(cacheKey);
+            if (Array.isArray(cachedProducts)) {
+                for (const p of cachedProducts) {
+                    if (p && p.id) {
+                        this.productsMap.set(p.id, {
+                            name: p.name || '',
+                            cost: Number(p.cost) || 0,
+                            price: Number(p.price) || 0
+                        });
+                    }
+                }
+                return;
+            }
+        }
+
         try {
             const { data, error } = await window.ProductsService.getAll();
             if (error || !Array.isArray(data)) return;
 
+            var productsForCache = [];
+
             for (const p of data) {
                 if (p && p.id) {
-                    this.productsMap.set(p.id, {
+                    var normalized = {
+                        id: p.id,
                         name: p.name || '',
                         cost: Number(p.cost) || 0,
                         price: Number(p.price) || 0
+                    };
+
+                    this.productsMap.set(normalized.id, {
+                        name: normalized.name,
+                        cost: normalized.cost,
+                        price: normalized.price
                     });
+
+                    productsForCache.push(normalized);
                 }
+            }
+
+            if (window.ViewCache) {
+                window.ViewCache.set(cacheKey, productsForCache);
             }
         } catch (err) {
             console.error('Products load error:', err);
@@ -291,16 +476,7 @@ window.SalesView = {
     },
 
     getCostBySaleId(saleId) {
-        let totalCost = 0;
-
-        for (const ps of this.productSalesData) {
-            if (ps.sale_id === saleId) {
-                const cost = Number(ps.cost) || 0;
-                totalCost += (Number(ps.quantity) || 0) * cost;
-            }
-        }
-
-        return totalCost;
+        return this._costMap.get(saleId) || 0;
     },
 
     getProductSalesBySaleId(saleId) {
@@ -365,7 +541,9 @@ window.SalesView = {
             const profit = total - cost;
             const margin = total > 0 ? (profit / total) * 100 : 0;
 
-            const [year, month] = key.split('-');
+            const parts = key.split('-');
+            const year = parts[0];
+            const month = parts[1];
             const monthName = trMonths[parseInt(month, 10) - 1] || month;
 
             return {
@@ -541,6 +719,7 @@ window.SalesView = {
     changePageSize(value) {
         this.pageSize = parseInt(value, 10) || 10;
         this.currentPage = 1;
+        this._lastFetchKey = '';
         if (this.viewMode === 'daily') {
             this.loadData();
         } else {
@@ -566,6 +745,7 @@ window.SalesView = {
         }
 
         this.currentPage = 1;
+        this._lastFetchKey = '';
         this.loadData();
     },
 
@@ -574,6 +754,7 @@ window.SalesView = {
         this.filterStart = fmt.monthStart();
         this.filterEnd = fmt.today();
         this.currentPage = 1;
+        this._lastFetchKey = '';
 
         const startEl = document.getElementById('salesFilterStart');
         const endEl = document.getElementById('salesFilterEnd');
@@ -586,6 +767,7 @@ window.SalesView = {
     setViewMode(mode) {
         this.viewMode = mode;
         this.currentPage = 1;
+        this._lastFetchKey = '';
 
         const dailyBtn = document.getElementById('switchDaily');
         const monthlyBtn = document.getElementById('switchMonthly');
@@ -712,6 +894,7 @@ window.SalesView = {
 
         try {
             const result = await window.SalesService.remove(saleId);
+            if (!this._isActive) return;
 
             if (result.error) {
                 this.setStatus(this.getErrorMessage(result.error, 'Satış silinemedi.'), 'error');
@@ -719,7 +902,15 @@ window.SalesView = {
             }
 
             this.setStatus('Satış başarıyla silindi.', 'success');
-            await this.loadData();
+            this._lastFetchKey = '';
+
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('dashboard:');
+                window.ViewCache.invalidate('sales:' + this._getTenantId());
+            }
+
+            await this.loadData(true);
+            if (!this._isActive) return;
         } catch (err) {
             console.error('Delete sale error:', err);
             this.setStatus('Satış silinirken beklenmeyen hata oluştu.', 'error');
@@ -886,6 +1077,7 @@ window.SalesView = {
             var exportResult = await window.SalesService.getByDateRange(
                 this.filterStart, this.filterEnd
             );
+            if (!this._isActive) return;
 
             if (exportResult.error || !exportResult.data || !exportResult.data.length) {
                 this.setStatus('Dışa aktarılacak satış verisi bulunamadı.', 'error');
@@ -894,6 +1086,8 @@ window.SalesView = {
 
             this.salesData = exportResult.data;
             await this.loadProductSales();
+            if (!this._isActive) return;
+            this._rebuildCostMap();
 
             var businessName = (window.STATE && window.STATE.tenant && window.STATE.tenant.name) || 'İşletme';
             var startLabel = window.Formatters.date(this.filterStart);
@@ -1027,6 +1221,7 @@ window.SalesView = {
         } finally {
             this.salesData = savedSales;
             this.productSalesData = savedProductSales;
+            this._rebuildCostMap();
         }
     },
 

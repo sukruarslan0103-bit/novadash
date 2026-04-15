@@ -8,6 +8,15 @@ window.TransferView = {
     previewRows: [],
     validatedRows: [],
     productMap: new Map(),
+    _submitting: false,
+    _importKey: null,
+    _statusTimer: null,
+    _previewResetTimer: null,
+    _backupData: null,
+    _restoring: false,
+    _restoreStatusTimer: null,
+    _listeners: [],
+    _isActive: false,
 
     render(container) {
         container.innerHTML = `
@@ -72,6 +81,18 @@ window.TransferView = {
                         ">
                             Satışa Aktar
                         </button>
+
+                        <button id="downloadBackupBtn" type="button" style="
+                            border:none;
+                            background:#2563eb;
+                            color:#fff;
+                            padding:12px 18px;
+                            border-radius:12px;
+                            font-weight:700;
+                            cursor:pointer;
+                        ">
+                            Backup İndir
+                        </button>
                     </div>
 
                     <div style="
@@ -118,32 +139,138 @@ window.TransferView = {
                         </table>
                     </div>
                 </div>
+
+                <div style="
+                    background:#ffffff;
+                    border:1px solid #e5e7eb;
+                    border-radius:20px;
+                    box-shadow:0 10px 30px rgba(15,23,42,0.06);
+                    padding:24px;
+                    margin-top:24px;
+                ">
+                    <div style="margin-bottom:16px;">
+                        <h3 style="margin:0 0 4px 0;font-size:17px;font-weight:800;color:#0f172a;">Backup Geri Yükle</h3>
+                        <p style="margin:0;color:#64748b;font-size:13px;">
+                            İndirilen backup.json dosyasını seçerek verileri geri yükle.
+                        </p>
+                    </div>
+
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:18px;">
+                        <label for="backupFileInput" style="
+                            display:inline-flex;
+                            align-items:center;
+                            justify-content:center;
+                            border:1px solid #d1d5db;
+                            background:#f8fafc;
+                            color:#334155;
+                            padding:12px 18px;
+                            border-radius:12px;
+                            font-weight:700;
+                            cursor:pointer;
+                        ">
+                            JSON Dosyası Seç
+                        </label>
+
+                        <input
+                            id="backupFileInput"
+                            type="file"
+                            accept=".json"
+                            style="display:none;"
+                        >
+
+                        <button id="restoreBackupBtn" type="button" style="
+                            border:none;
+                            background:#7c3aed;
+                            color:#fff;
+                            padding:12px 18px;
+                            border-radius:12px;
+                            font-weight:700;
+                            cursor:pointer;
+                        ">
+                            Geri Yükle
+                        </button>
+                    </div>
+
+                    <div id="restoreStatus"></div>
+                </div>
             </section>
         `;
 
+        this._isActive = true;
         this.previewRows = [];
         this.validatedRows = [];
         this.productMap = new Map();
+        this._submitting = false;
+        this._importKey = null;
+        this._backupData = null;
+        this._restoring = false;
+
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+
+        if (this._previewResetTimer) {
+            clearTimeout(this._previewResetTimer);
+            this._previewResetTimer = null;
+        }
 
         this.bindEvents();
     },
 
+    _on(el, event, fn) {
+        if (!el) return;
+        el.addEventListener(event, fn);
+        this._listeners.push({ el: el, event: event, fn: fn });
+    },
+
+    _removeAllListeners() {
+        for (var i = 0; i < this._listeners.length; i++) {
+            var l = this._listeners[i];
+            l.el.removeEventListener(l.event, l.fn);
+        }
+        this._listeners = [];
+    },
+
+    destroy() {
+        this._isActive = false;
+        this._removeAllListeners();
+
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+
+        if (this._previewResetTimer) {
+            clearTimeout(this._previewResetTimer);
+            this._previewResetTimer = null;
+        }
+
+        if (this._restoreStatusTimer) {
+            clearTimeout(this._restoreStatusTimer);
+            this._restoreStatusTimer = null;
+        }
+
+        this.previewRows = [];
+        this.validatedRows = [];
+        this.productMap = new Map();
+        this._backupData = null;
+        this._submitting = false;
+        this._restoring = false;
+        this._importKey = null;
+    },
+
     bindEvents() {
-        const downloadBtn = document.getElementById('downloadSalesTemplateBtn');
-        const fileInput = document.getElementById('salesFileInput');
-        const importBtn = document.getElementById('importSalesBtn');
+        this._removeAllListeners();
 
-        if (downloadBtn) {
-            downloadBtn.addEventListener('click', () => this.downloadTemplate());
-        }
+        var self = this;
 
-        if (fileInput) {
-            fileInput.addEventListener('change', (event) => this.handleExcelFile(event));
-        }
-
-        if (importBtn) {
-            importBtn.addEventListener('click', () => this.importToDatabase());
-        }
+        this._on(document.getElementById('downloadSalesTemplateBtn'), 'click', function () { self.downloadTemplate(); });
+        this._on(document.getElementById('salesFileInput'), 'change', function (event) { self.handleExcelFile(event); });
+        this._on(document.getElementById('importSalesBtn'), 'click', function () { self.importToDatabase(); });
+        this._on(document.getElementById('downloadBackupBtn'), 'click', function () { self.downloadBackup(); });
+        this._on(document.getElementById('backupFileInput'), 'change', function (event) { self.handleBackupFile(event); });
+        this._on(document.getElementById('restoreBackupBtn'), 'click', function () { self.restoreFromBackup(); });
     },
 
     downloadTemplate() {
@@ -158,10 +285,19 @@ window.TransferView = {
     },
 
     async handleExcelFile(event) {
+        const fileInput = document.getElementById('salesFileInput');
         const file = event.target.files && event.target.files[0];
         if (!file) return;
 
+        if (this._previewResetTimer) {
+            clearTimeout(this._previewResetTimer);
+            this._previewResetTimer = null;
+        }
+
+        this._importKey = null;
+
         const readResult = await window.ImportExport.readSalesExcel(file);
+        if (!this._isActive) return;
 
         if (!readResult.ok) {
             if (readResult.rows && readResult.rows.length) {
@@ -170,6 +306,10 @@ window.TransferView = {
                 this.renderPreview(readResult.rows);
             } else {
                 this.resetPreview();
+            }
+
+            if (fileInput) {
+                fileInput.value = '';
             }
 
             this.setStatus(readResult.message, 'error');
@@ -181,10 +321,16 @@ window.TransferView = {
         this.renderPreview(parsedRows);
 
         const productLoad = await window.ImportExport.loadActiveProducts();
+        if (!this._isActive) return;
 
         if (!productLoad.ok) {
             this.validatedRows = [];
             this.productMap = new Map();
+
+            if (fileInput) {
+                fileInput.value = '';
+            }
+
             this.setStatus(productLoad.message, 'error');
             return;
         }
@@ -199,6 +345,10 @@ window.TransferView = {
                 .map(name => `- ${window.ImportExport.escapeHtml(name)}`)
                 .join('<br>');
 
+            if (fileInput) {
+                fileInput.value = '';
+            }
+
             this.setHtmlStatus(`
                 <div><strong>Sistemde bulunamayan ürünler var.</strong></div>
                 <div style="margin-top:8px;">${lines}</div>
@@ -212,19 +362,86 @@ window.TransferView = {
     },
 
     async importToDatabase() {
-        if (!this.validatedRows.length) {
-            this.setStatus('Aktarım için önce geçerli ve doğrulanmış dosya yüklemelisin.', 'error');
-            return;
+        if (this._submitting) return;
+        this._submitting = true;
+
+        const btn = document.getElementById('importSalesBtn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Aktarılıyor...';
+            btn.style.opacity = '0.7';
+            btn.style.cursor = 'not-allowed';
         }
 
-        const result = await window.ImportExport.importSalesRows(this.validatedRows, this.productMap);
+        try {
+            if (!this.validatedRows.length) {
+                this.setStatus('Aktarım için önce geçerli ve doğrulanmış dosya yüklemelisin.', 'error');
+                return;
+            }
 
-        if (!result.ok) {
-            this.setStatus(result.message, 'error');
-            return;
+            this._importKey = this._importKey || crypto.randomUUID();
+
+            const result = await window.ImportExport.importSalesRows(
+                this.validatedRows,
+                this.productMap,
+                this._importKey
+            );
+            if (!this._isActive) return;
+
+            if (!result.ok) {
+                const fileInput = document.getElementById('salesFileInput');
+                if (fileInput) {
+                    fileInput.value = '';
+                }
+
+                this.validatedRows = [];
+                this.productMap = new Map();
+                this._importKey = null;
+
+                if (this._previewResetTimer) {
+                    clearTimeout(this._previewResetTimer);
+                    this._previewResetTimer = null;
+                }
+
+                this._previewResetTimer = setTimeout(() => {
+                    this.resetPreview();
+                    this._previewResetTimer = null;
+                }, 10000);
+
+                this.setStatus(result.message, 'error');
+                return;
+            }
+
+            this.setStatus(`${result.importedCount} satır başarıyla aktarıldı.`, 'success');
+
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:');
+                window.ViewCache.invalidate('dashboard:');
+            }
+
+            window.dispatchEvent(new Event('sales:updated'));
+
+            this.previewRows = [];
+            this.validatedRows = [];
+            this.productMap = new Map();
+            this._importKey = null;
+
+            const fileInput = document.getElementById('salesFileInput');
+            if (fileInput) {
+                fileInput.value = '';
+            }
+
+            this.renderPreview([]);
+        } finally {
+            this._submitting = false;
+
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Satışa Aktar';
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+            }
         }
-
-        this.setStatus(`${result.importedCount} satır başarıyla aktarıldı.`, 'success');
     },
 
     renderPreview(rows) {
@@ -256,12 +473,29 @@ window.TransferView = {
         this.previewRows = [];
         this.validatedRows = [];
         this.productMap = new Map();
+        this._importKey = null;
+
+        const fileInput = document.getElementById('salesFileInput');
+        if (fileInput) {
+            fileInput.value = '';
+        }
+
         this.renderPreview([]);
     },
 
     setStatus(message, type) {
         const el = document.getElementById('transferStatus');
         if (!el) return;
+
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+
+        if (!message) {
+            el.innerHTML = '';
+            return;
+        }
 
         if (type === 'success') {
             el.innerHTML = `
@@ -277,6 +511,12 @@ window.TransferView = {
                     ${window.ImportExport.escapeHtml(message)}
                 </div>
             `;
+
+            this._statusTimer = setTimeout(() => {
+                const statusEl = document.getElementById('transferStatus');
+                if (statusEl) statusEl.innerHTML = '';
+                this._statusTimer = null;
+            }, 10000);
             return;
         }
 
@@ -293,11 +533,27 @@ window.TransferView = {
                 ${window.ImportExport.escapeHtml(message)}
             </div>
         `;
+
+        this._statusTimer = setTimeout(() => {
+            const statusEl = document.getElementById('transferStatus');
+            if (statusEl) statusEl.innerHTML = '';
+            this._statusTimer = null;
+        }, 10000);
     },
 
     setHtmlStatus(html, type) {
         const el = document.getElementById('transferStatus');
         if (!el) return;
+
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+
+        if (!html) {
+            el.innerHTML = '';
+            return;
+        }
 
         if (type === 'success') {
             el.innerHTML = `
@@ -313,6 +569,12 @@ window.TransferView = {
                     ${html}
                 </div>
             `;
+
+            this._statusTimer = setTimeout(() => {
+                const statusEl = document.getElementById('transferStatus');
+                if (statusEl) statusEl.innerHTML = '';
+                this._statusTimer = null;
+            }, 10000);
             return;
         }
 
@@ -329,5 +591,179 @@ window.TransferView = {
                 ${html}
             </div>
         `;
+
+        this._statusTimer = setTimeout(() => {
+            const statusEl = document.getElementById('transferStatus');
+            if (statusEl) statusEl.innerHTML = '';
+            this._statusTimer = null;
+        }, 10000);
+    },
+
+    async downloadBackup() {
+        const result = await window.SalesService.getFullBackup();
+        if (!this._isActive) return;
+
+        if (!result.ok) {
+            this.setStatus(result.message, 'error');
+            return;
+        }
+
+        const blob = new Blob(
+            [JSON.stringify(result.data, null, 2)],
+            { type: 'application/json' }
+        );
+
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'backup.json';
+        a.click();
+
+        URL.revokeObjectURL(url);
+
+        this.setStatus('Backup indirildi.', 'success');
+    },
+
+    async handleBackupFile(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        this._backupData = null;
+
+        try {
+            const text = await file.text();
+            if (!this._isActive) return;
+            const parsed = JSON.parse(text);
+
+            if (!parsed || !Array.isArray(parsed.sales)) {
+                this.setRestoreStatus('Geçersiz backup dosyası. sales alanı bulunamadı.', 'error');
+                return;
+            }
+
+            this._backupData = parsed;
+            this.setRestoreStatus(`Backup yüklendi. ${parsed.sales.length} satış kaydı bulundu. "Geri Yükle" butonuna bas.`, 'success');
+        } catch (err) {
+            this._backupData = null;
+            this.setRestoreStatus('JSON dosyası okunamadı veya bozuk.', 'error');
+        }
+    },
+
+    async restoreFromBackup() {
+        if (this._restoring) return;
+
+        if (!this._backupData) {
+            this.setRestoreStatus('Önce bir backup JSON dosyası seçmelisin.', 'error');
+            return;
+        }
+
+        this._restoring = true;
+
+        const btn = document.getElementById('restoreBackupBtn');
+        const setBtnLoading = (loading) => {
+            if (!btn) return;
+            btn.disabled = loading;
+            btn.textContent = loading ? 'Yükleniyor...' : 'Geri Yükle';
+            btn.style.opacity = loading ? '0.7' : '1';
+            btn.style.cursor = loading ? 'not-allowed' : 'pointer';
+        };
+
+        setBtnLoading(true);
+        this.setRestoreStatus('Geri yükleme işlemi başladı, lütfen bekleyin...', 'success');
+
+        let success = false;
+        try {
+            const result = await window.SalesService.restoreFromBackup(this._backupData);
+            if (!this._isActive) return;
+
+            if (!result.ok) {
+                this.setRestoreStatus(result.message, 'error');
+                setBtnLoading(false);
+                this._restoring = false;
+                return;
+            }
+
+            success = true;
+            this._backupData = null;
+
+            const backupFileInput = document.getElementById('backupFileInput');
+            if (backupFileInput) {
+                backupFileInput.value = '';
+            }
+
+            this.setRestoreStatus(result.message, 'success');
+
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            if (!this._isActive) return;
+
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:');
+                window.ViewCache.invalidate('dashboard:');
+            }
+            window.dispatchEvent(new Event('dashboard:refresh'));
+        } catch (err) {
+            this.setRestoreStatus(err.message || 'Geri yükleme başarısız', 'error');
+        } finally {
+            setBtnLoading(false);
+            this._restoring = false;
+        }
+    },
+
+    setRestoreStatus(message, type) {
+        const el = document.getElementById('restoreStatus');
+        if (!el) return;
+
+        if (this._restoreStatusTimer) {
+            clearTimeout(this._restoreStatusTimer);
+            this._restoreStatusTimer = null;
+        }
+
+        if (!message) {
+            el.innerHTML = '';
+            return;
+        }
+
+        if (type === 'success') {
+            el.innerHTML = `
+                <div style="
+                    padding:14px 16px;
+                    border-radius:14px;
+                    background:#ecfdf5;
+                    border:1px solid #86efac;
+                    color:#166534;
+                    font-size:14px;
+                    font-weight:600;
+                ">
+                    ${window.ImportExport.escapeHtml(message)}
+                </div>
+            `;
+
+            this._restoreStatusTimer = setTimeout(() => {
+                const statusEl = document.getElementById('restoreStatus');
+                if (statusEl) statusEl.innerHTML = '';
+                this._restoreStatusTimer = null;
+            }, 10000);
+            return;
+        }
+
+        el.innerHTML = `
+            <div style="
+                padding:14px 16px;
+                border-radius:14px;
+                background:#fef2f2;
+                border:1px solid #fca5a5;
+                color:#991b1b;
+                font-size:14px;
+                font-weight:600;
+            ">
+                ${window.ImportExport.escapeHtml(message)}
+            </div>
+        `;
+
+        this._restoreStatusTimer = setTimeout(() => {
+            const statusEl = document.getElementById('restoreStatus');
+            if (statusEl) statusEl.innerHTML = '';
+            this._restoreStatusTimer = null;
+        }, 10000);
     }
 };

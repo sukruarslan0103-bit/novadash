@@ -7,10 +7,58 @@
 window.DashboardView = {
     kpiPeriods: { ciro: 'monthly', gider: 'monthly', kar: 'monthly', trend: 'monthly' },
     cachedData: null,
+    isRendering: false,
+    _pendingRefresh: false,
+    _listeners: [],
+    _isActive: false,
 
     async render(container) {
         var self = window.DashboardView;
+        self._isActive = true;
+
+        if (self.isRendering) {
+            self._pendingRefresh = true;
+            return;
+        }
+
+        self.isRendering = true;
         self.container = container;
+
+        if (!self._eventsBound) {
+            self._eventsBound = true;
+
+            function handleUpdate() {
+                if (!self.container) return;
+
+                if (self.isRendering) {
+                    self._pendingRefresh = true;
+                    return;
+                }
+
+                self.cachedData = null;
+                self.render(self.container);
+            }
+
+            self._on(window, 'sales:updated', handleUpdate);
+            self._on(window, 'expenses:updated', handleUpdate);
+            self._on(window, 'products:updated', handleUpdate);
+            self._on(window, 'dashboard:refresh', handleUpdate);
+        }
+
+        var tenantId = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+        var start = window.STATE?.filters?.startDate || '';
+        var end = window.STATE?.filters?.endDate || '';
+
+        var cacheKey = 'dashboard:' + tenantId + ':' + start + ':' + end;
+
+        var cached = window.ViewCache ? window.ViewCache.get(cacheKey) : null;
+
+        if (cached) {
+            self.cachedData = cached;
+            self.renderDashboard(container, cached);
+            self._finishRender();
+            return;
+        }
 
         container.innerHTML =
             '<div class="card">' +
@@ -22,8 +70,15 @@ window.DashboardView = {
 
         try {
             var data = await window.AnalyticsService.getDashboardAnalytics();
+            if (!self._isActive) return;
             self.cachedData = data;
+
+            if (window.ViewCache) {
+                window.ViewCache.set(cacheKey, data);
+            }
+
             self.renderDashboard(container, data);
+
         } catch (error) {
             console.error('Dashboard render error:', error);
 
@@ -38,19 +93,29 @@ window.DashboardView = {
                     '</div>' +
                 '</div>';
         }
+
+        self._finishRender();
     },
 
-    /* ============================================================
-       RENDER DASHBOARD — Tam layout
-    ============================================================ */
+    _finishRender() {
+        var self = window.DashboardView;
+
+        self.isRendering = false;
+
+        if (self._pendingRefresh) {
+            self._pendingRefresh = false;
+            self.cachedData = null;
+            if (self.container) {
+                self.render(self.container);
+            }
+        }
+    },
 
     renderDashboard(container, data) {
         var self = window.DashboardView;
         var monthly = data.monthly;
 
         container.innerHTML =
-
-            /* ---- KPI GRID ---- */
             '<div class="kpi-grid">' +
                 self.buildKpiCard('ciro', 'CİRO', monthly.ciro, monthly.ciroChange, 'geçen aya göre') +
                 self.buildKpiCard('gider', 'GİDER', monthly.gider, monthly.giderChange, 'geçen aya göre') +
@@ -58,7 +123,6 @@ window.DashboardView = {
                 self.buildKpiCard('trend', 'SATIŞ TREND', monthly.trend, monthly.trendChange, 'geçen aya göre', true) +
             '</div>' +
 
-            /* ---- CHARTS ROW ---- */
             '<div class="charts-row">' +
                 '<div class="card">' +
                     '<div class="card-header">' +
@@ -78,7 +142,6 @@ window.DashboardView = {
                 '</div>' +
             '</div>' +
 
-            /* ---- BOTTOM GRID: Alerts + Top Products ---- */
             '<div class="bottom-grid">' +
                 '<div class="card">' +
                     '<div class="card-header"><div class="card-title">Kritik Uyarılar</div><span class="card-subtitle">' + data.alerts.length + ' uyarı</span></div>' +
@@ -103,9 +166,20 @@ window.DashboardView = {
                 '</div>' +
             '</div>' +
 
-            /* ---- ANALYSIS ---- */
-            '<div class="card">' +
-                '<div class="card-header"><div class="card-title">Akıllı Analiz</div><span class="card-subtitle">Otomatik yorumlar</span></div>' +
+            '<div class="card" style="cursor:pointer;" onclick="window.location.hash=\'#health\'">' +
+                '<div class="card-header">' +
+                    '<div><div class="card-title">Saglik Raporu</div><span class="card-subtitle">Isletme performans skoru</span></div>' +
+                    '<div style="display:flex;align-items:center;gap:10px;">' +
+                        '<div style="position:relative;width:44px;height:44px;">' +
+                            '<svg viewBox="0 0 36 36" style="width:44px;height:44px;transform:rotate(-90deg);">' +
+                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#e2e8f0" stroke-width="3"></circle>' +
+                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#059669" stroke-width="3" stroke-dasharray="' + (data.healthScore || 0) + ', 100" stroke-linecap="round" class="health-fill"></circle>' +
+                            '</svg>' +
+                            '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#0f172a;" class="health-value">' + (data.healthScore || 0) + '</div>' +
+                        '</div>' +
+                        '<span style="font-size:22px;font-weight:800;color:#0f172a;">' + (data.healthScore || 0) + '<span style="font-size:13px;color:#94a3b8;font-weight:600;"> / 100</span></span>' +
+                    '</div>' +
+                '</div>' +
                 '<div class="analysis-grid">' +
                     data.analysis.map(function (a) {
                         return '<div class="analysis-item">' +
@@ -122,10 +196,6 @@ window.DashboardView = {
         self.updateHeaderWidgets(data);
     },
 
-    /* ============================================================
-       KPI CARD BUILDER
-    ============================================================ */
-
     buildKpiCard(key, title, value, change, label, isPercent) {
         var self = window.DashboardView;
 
@@ -133,11 +203,11 @@ window.DashboardView = {
             ? ('%' + self.safeFixed(value))
             : self.formatCurrency(value);
 
-        var trendClass = change >= 0 ? 'up' : 'down';
-        // Gider için ters mantık: gider artışı = kötü
-        if (key === 'gider') trendClass = change >= 0 ? 'down' : 'up';
+        var isNew = (change === null || change === undefined);
+        var trendClass = isNew ? 'up' : (change >= 0 ? 'up' : 'down');
+        if (key === 'gider' && !isNew) trendClass = change >= 0 ? 'down' : 'up';
 
-        var arrow = change >= 0 ? '↑' : '↓';
+        var arrow = isNew ? '' : (change >= 0 ? '↑ ' : '↓ ');
 
         return '<div class="kpi-card" id="kpi-' + key + '">' +
             '<div class="kpi-header">' +
@@ -149,21 +219,17 @@ window.DashboardView = {
             '</div>' +
             '<div class="kpi-value" id="kpi-value-' + key + '">' + displayValue + '</div>' +
             '<div class="kpi-footer">' +
-                '<span class="kpi-trend ' + trendClass + '" id="kpi-trend-' + key + '">' + arrow + ' ' + self.formatPercent(change) + '</span>' +
+                '<span class="kpi-trend ' + trendClass + '" id="kpi-trend-' + key + '">' + arrow + self.formatPercent(change) + '</span>' +
                 '<span class="kpi-trend-label" id="kpi-label-' + key + '">' + label + '</span>' +
             '</div>' +
         '</div>';
     },
 
-    /* ============================================================
-       KPI TOGGLE — Aylık / Günlük geçiş
-    ============================================================ */
-
     bindKpiToggles() {
         var self = window.DashboardView;
 
         document.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            self._on(btn, 'click', function () {
                 self.toggleKpi(this.dataset.kpi, this.dataset.period);
             });
         });
@@ -200,10 +266,11 @@ window.DashboardView = {
             ? ('%' + self.safeFixed(value))
             : self.formatCurrency(value);
 
-        var trendClass = change >= 0 ? 'up' : 'down';
-        if (kpiKey === 'gider') trendClass = change >= 0 ? 'down' : 'up';
+        var isNew = (change === null || change === undefined);
+        var trendClass = isNew ? 'up' : (change >= 0 ? 'up' : 'down');
+        if (kpiKey === 'gider' && !isNew) trendClass = change >= 0 ? 'down' : 'up';
 
-        var arrow = change >= 0 ? '↑' : '↓';
+        var arrow = isNew ? '' : (change >= 0 ? '↑ ' : '↓ ');
 
         var valueEl = document.getElementById('kpi-value-' + kpiKey);
         var trendEl = document.getElementById('kpi-trend-' + kpiKey);
@@ -211,12 +278,11 @@ window.DashboardView = {
 
         if (valueEl) valueEl.textContent = displayValue;
         if (trendEl) {
-            trendEl.textContent = arrow + ' ' + self.formatPercent(change);
+            trendEl.textContent = arrow + self.formatPercent(change);
             trendEl.className = 'kpi-trend ' + trendClass;
         }
         if (labelEl) labelEl.textContent = label;
 
-        // Toggle button active state
         var card = document.getElementById('kpi-' + kpiKey);
         if (card) {
             card.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
@@ -224,10 +290,6 @@ window.DashboardView = {
             });
         }
     },
-
-    /* ============================================================
-       CHARTS
-    ============================================================ */
 
     renderSalesChart(data) {
         window.destroyChart('salesChart');
@@ -276,7 +338,6 @@ window.DashboardView = {
         var cats = data.expenseCategories || [];
 
         if (cats.length === 0) {
-            // Boş state
             ctx.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:#94a3b8;font-size:14px;">Gider verisi bulunamadı</div>';
             return;
         }
@@ -304,12 +365,7 @@ window.DashboardView = {
         });
     },
 
-    /* ============================================================
-       HEADER WIDGETS — Health Score + Task Count
-    ============================================================ */
-
     updateHeaderWidgets(data) {
-        // Health Score
         var healthValue = document.querySelector('.health-value');
         var healthFill = document.querySelector('.health-fill');
 
@@ -321,17 +377,12 @@ window.DashboardView = {
             healthFill.setAttribute('stroke-dasharray', (data.healthScore || 0) + ', 100');
         }
 
-        // Task Count
         var taskCountEl = document.getElementById('taskCount');
         if (taskCountEl) {
             var count = data.taskCount || 0;
             taskCountEl.textContent = count + ' görev';
         }
     },
-
-    /* ============================================================
-       FORMAT HELPERS
-    ============================================================ */
 
     formatCurrency(amount) {
         var fmt = window.Formatters;
@@ -350,15 +401,35 @@ window.DashboardView = {
     },
 
     formatPercent(value) {
-        var fmt = window.Formatters;
-        if (fmt && typeof fmt.percent === 'function') {
-            // Formatters.percent + işareti ekliyor, sadece mutlak değer istiyoruz
-            return Math.abs(Number(value || 0)).toFixed(1) + '%';
-        }
+        if (value === null || value === undefined) return 'Yeni';
         return Math.abs(Number(value || 0)).toFixed(1) + '%';
     },
 
     safeFixed(value) {
         return Number(value || 0).toFixed(1);
+    },
+
+    _on(el, event, fn) {
+        if (!el) return;
+        el.addEventListener(event, fn);
+        this._listeners.push({ el: el, event: event, fn: fn });
+    },
+
+    _removeAllListeners() {
+        for (var i = 0; i < this._listeners.length; i++) {
+            var l = this._listeners[i];
+            l.el.removeEventListener(l.event, l.fn);
+        }
+        this._listeners = [];
+    },
+
+    destroy() {
+        this._isActive = false;
+        this._removeAllListeners();
+        this._eventsBound = false;
+        this.cachedData = null;
+        this.isRendering = false;
+        this._pendingRefresh = false;
+        this.container = null;
     }
 };

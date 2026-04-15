@@ -19,6 +19,20 @@ window.ProductsService = (function () {
         return String(value).slice(0, 10);
     }
 
+    function clearPerformanceCache() {
+        _perfCache.key = null;
+        _perfCache.data = null;
+        _perfCache.ts = 0;
+    }
+
+    var _perfCache = {
+        key: null,
+        data: null,
+        ts: 0
+    };
+
+    var CACHE_TTL = 10000;
+
     async function getAll(options) {
         options = options || {};
 
@@ -35,10 +49,10 @@ window.ProductsService = (function () {
             filters: [
                 { op: 'eq', column: 'is_deleted', value: false }
             ],
-            order: { column: 'name', asc: true }
+            order: { column: 'name', asc: true },
+            select: options.select || 'id,name,price,cost,category_id,category_name,is_active'
         };
 
-        // Kullanıcı ekstra filtre verirse mevcut filtrelere ekle
         if (options.filters && Array.isArray(options.filters)) {
             defaults.filters = defaults.filters.concat(options.filters);
             delete options.filters;
@@ -59,21 +73,54 @@ window.ProductsService = (function () {
             };
         }
 
-        if (!window.AnalyticsService || typeof window.AnalyticsService.getProductPerformanceSummary !== 'function') {
+        var cacheKey = [
+            tenantId,
+            normalizeDate(options.startDate),
+            normalizeDate(options.endDate)
+        ].join('|');
+
+        var now = Date.now();
+
+        if (_perfCache.key === cacheKey && (now - _perfCache.ts) < CACHE_TTL) {
+            return {
+                data: _perfCache.data,
+                error: null
+            };
+        }
+
+        var client = window.SupabaseService && typeof window.SupabaseService.getClient === 'function'
+            ? window.SupabaseService.getClient()
+            : null;
+
+        if (!client) {
             return {
                 data: [],
-                error: 'AnalyticsService ürün performans motoru bulunamadı'
+                error: 'Supabase client bulunamadı'
             };
         }
 
         try {
-            var summaries = await window.AnalyticsService.getProductPerformanceSummary(
-                normalizeDate(options.startDate),
-                normalizeDate(options.endDate)
-            );
+            var res = await client.rpc('get_product_performance_summary', {
+                p_tenant_id: tenantId,
+                p_start: normalizeDate(options.startDate) || null,
+                p_end: normalizeDate(options.endDate) || null
+            });
+
+            if (res.error) {
+                return {
+                    data: [],
+                    error: res.error.message || res.error
+                };
+            }
+
+            var data = Array.isArray(res.data) ? res.data : [];
+
+            _perfCache.key = cacheKey;
+            _perfCache.data = data;
+            _perfCache.ts = now;
 
             return {
-                data: Array.isArray(summaries) ? summaries : [],
+                data: data,
                 error: null
             };
         } catch (error) {
@@ -148,16 +195,18 @@ window.ProductsService = (function () {
             };
         }
 
+        clearPerformanceCache();
+
         return await window.SupabaseService.insert('products', product);
     }
 
     async function update(id, updates) {
+        clearPerformanceCache();
         return await window.SupabaseService.update('products', id, updates);
     }
 
     async function remove(id) {
-        // Soft delete: is_deleted = true, is_active = false
-        // Tarihsel satış verileri (product_sales) korunur
+        clearPerformanceCache();
         return await window.SupabaseService.update('products', id, {
             is_deleted: true,
             is_active: false

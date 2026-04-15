@@ -17,6 +17,8 @@ window.ExpensesView = {
     },
     pendingDeleteId: null,
     toastTimer: null,
+    _listeners: [],
+    _isActive: false,
 
     pagination: {
         page: 1,
@@ -28,6 +30,7 @@ window.ExpensesView = {
     },
 
     async render(container) {
+        this._isActive = true;
         this.container = container;
 
         container.innerHTML =
@@ -41,8 +44,11 @@ window.ExpensesView = {
         try {
             this.ensureDefaultFilterMode();
             await this.ensureDefaultCategories();
+            if (!this._isActive) return;
             await this.loadCategories();
+            if (!this._isActive) return;
             await this.loadExpenses();
+            if (!this._isActive) return;
             this.renderPage();
             this.bindEvents();
         } catch (error) {
@@ -264,6 +270,7 @@ window.ExpensesView = {
         }
 
         await this.loadExpenses();
+        if (!this._isActive) return;
         this.renderPage();
         this.bindEvents();
     },
@@ -360,31 +367,26 @@ window.ExpensesView = {
     },
 
     async loadMonthlyExpenses() {
-        var res = await window.ExpensesService.getByDateRange(null, null, {
-            ascending: false,
-            page: 1,
-            pageSize: 100000
-        });
+        var result = await window.ExpensesService.getMonthlySummary(
+            this.pagination.page,
+            this.pagination.pageSize
+        );
 
-        var rows = res.data || [];
-        this.expenses = rows;
-        this.groupedMonthlyExpenses = this.groupExpensesByMonth(rows);
+        var rows = result.rows || [];
+        this.expenses = [];
+        this.groupedMonthlyExpenses = rows;
 
-        var totalMonths = this.groupedMonthlyExpenses.length;
-        var pageSize = Number(this.pagination.pageSize || 10);
-        var totalPages = Math.max(1, Math.ceil(totalMonths / pageSize));
+        var totalMonths = Number(result.totalMonths || 0);
+        var totalPages = Number(result.totalPages || 1);
 
         if (this.pagination.page > totalPages) {
             this.pagination.page = totalPages;
         }
 
-        var startIndex = (this.pagination.page - 1) * pageSize;
-        var endIndex = Math.min(startIndex + pageSize, totalMonths);
-
         this.pagination.totalPages = totalPages;
         this.pagination.totalCount = totalMonths;
-        this.pagination.from = totalMonths === 0 ? 0 : startIndex + 1;
-        this.pagination.to = endIndex;
+        this.pagination.from = totalMonths === 0 ? 0 : ((this.pagination.page - 1) * this.pagination.pageSize) + 1;
+        this.pagination.to = Math.min(this.pagination.page * this.pagination.pageSize, totalMonths);
     },
 
     groupExpensesByMonth(rows) {
@@ -460,10 +462,7 @@ window.ExpensesView = {
     },
 
     getVisibleMonthlyRows() {
-        var rows = this.groupedMonthlyExpenses || [];
-        var startIndex = (this.pagination.page - 1) * this.pagination.pageSize;
-        var endIndex = startIndex + this.pagination.pageSize;
-        return rows.slice(startIndex, endIndex);
+        return this.groupedMonthlyExpenses || [];
     },
 
     async fetchExportData(startDate, endDate) {
@@ -760,6 +759,8 @@ window.ExpensesView = {
     },
 
     renderPage() {
+        if (!this._isActive || !this.container) return;
+
         var totalExpense = this.getVisibleTotalExpense();
         var expenseCount = this.getVisibleExpenseCount();
         var activeFilterLabel = this.getActiveFilterLabel();
@@ -903,7 +904,7 @@ window.ExpensesView = {
                 '<tbody>' +
                     rows.map(function (row) {
                         var ratio = total > 0 ? (Number(row.amount || 0) / total) * 100 : 0;
-                        var categoryName = row.categories && row.categories.name ? row.categories.name : 'Kategori yok';
+                        var categoryName = (row.categories && row.categories.name) ? row.categories.name : (row.category_name || 'Kategori yok');
 
                         return '' +
                             '<tr>' +
@@ -1069,184 +1070,141 @@ window.ExpensesView = {
             '</div>';
     },
 
+    _on(el, event, fn) {
+        if (!el) return;
+        el.addEventListener(event, fn);
+        this._listeners.push({ el: el, event: event, fn: fn });
+    },
+
+    _removeAllListeners() {
+        (this._listeners || []).forEach(function (h) {
+            h.el.removeEventListener(h.event, h.fn);
+        });
+        this._listeners = [];
+    },
+
     bindEvents() {
+        if (!this._isActive || !this.container) return;
+
         var self = this;
 
-        var openExpenseModalBtn = document.getElementById('openExpenseModalBtn');
-        if (openExpenseModalBtn) {
-            openExpenseModalBtn.addEventListener('click', function () {
-                self.openExpenseModal();
-            });
-        }
+        this._removeAllListeners();
 
-        var closeExpenseModalBtn = document.getElementById('closeExpenseModalBtn');
-        if (closeExpenseModalBtn) {
-            closeExpenseModalBtn.addEventListener('click', function () {
-                self.closeExpenseModal();
-            });
-        }
+        this._on(document.getElementById('openExpenseModalBtn'), 'click', function () {
+            self.openExpenseModal();
+        });
+
+        this._on(document.getElementById('closeExpenseModalBtn'), 'click', function () {
+            self.closeExpenseModal();
+        });
 
         var expenseModalOverlay = document.getElementById('expenseModalOverlay');
-        if (expenseModalOverlay) {
-            expenseModalOverlay.addEventListener('click', function (e) {
-                if (e.target === expenseModalOverlay) {
-                    self.closeExpenseModal();
-                }
-            });
-        }
+        this._on(expenseModalOverlay, 'click', function (e) {
+            if (e.target === expenseModalOverlay) self.closeExpenseModal();
+        });
 
-        var expenseForm = document.getElementById('expenseForm');
-        if (expenseForm) {
-            expenseForm.addEventListener('submit', async function (e) {
-                e.preventDefault();
-                await self.handleCreateExpense();
-            });
-        }
+        this._on(document.getElementById('expenseForm'), 'submit', async function (e) {
+            e.preventDefault();
+            await self.handleCreateExpense();
+        });
 
-        var toggleCategoryFormBtn = document.getElementById('toggleCategoryFormBtn');
-        if (toggleCategoryFormBtn) {
-            toggleCategoryFormBtn.addEventListener('click', function () {
-                self.toggleCategoryPanel();
-            });
-        }
+        this._on(document.getElementById('toggleCategoryFormBtn'), 'click', function () {
+            self.toggleCategoryPanel();
+        });
 
-        var createCategoryBtn = document.getElementById('createCategoryBtn');
-        if (createCategoryBtn) {
-            createCategoryBtn.addEventListener('click', async function () {
-                await self.handleCreateCategory();
-            });
-        }
+        this._on(document.getElementById('createCategoryBtn'), 'click', async function () {
+            await self.handleCreateCategory();
+        });
 
-        var resetExpenseFormBtn = document.getElementById('resetExpenseFormBtn');
-        if (resetExpenseFormBtn) {
-            resetExpenseFormBtn.addEventListener('click', function () {
-                self.resetExpenseForm();
-            });
-        }
+        this._on(document.getElementById('resetExpenseFormBtn'), 'click', function () {
+            self.resetExpenseForm();
+        });
 
-        var expenseDailyToggleBtn = document.getElementById('expenseDailyToggleBtn');
-        if (expenseDailyToggleBtn) {
-            expenseDailyToggleBtn.addEventListener('click', async function () {
-                await self.applyPresetFilter('daily');
-            });
-        }
+        this._on(document.getElementById('expenseDailyToggleBtn'), 'click', async function () {
+            await self.applyPresetFilter('daily');
+        });
 
-        var expenseMonthlyToggleBtn = document.getElementById('expenseMonthlyToggleBtn');
-        if (expenseMonthlyToggleBtn) {
-            expenseMonthlyToggleBtn.addEventListener('click', async function () {
-                await self.applyPresetFilter('monthly');
-            });
-        }
+        this._on(document.getElementById('expenseMonthlyToggleBtn'), 'click', async function () {
+            await self.applyPresetFilter('monthly');
+        });
 
-        var applyExpenseFilterBtn = document.getElementById('applyExpenseFilterBtn');
-        if (applyExpenseFilterBtn) {
-            applyExpenseFilterBtn.addEventListener('click', async function () {
-                self.pagination.page = 1;
-                await self.applyFilters();
-            });
-        }
+        this._on(document.getElementById('applyExpenseFilterBtn'), 'click', async function () {
+            self.pagination.page = 1;
+            await self.applyFilters();
+        });
 
-        var resetExpenseFilterBtn = document.getElementById('resetExpenseFilterBtn');
-        if (resetExpenseFilterBtn) {
-            resetExpenseFilterBtn.addEventListener('click', async function () {
-                self.pagination.page = 1;
-                await self.resetFilters();
-            });
-        }
+        this._on(document.getElementById('resetExpenseFilterBtn'), 'click', async function () {
+            self.pagination.page = 1;
+            await self.resetFilters();
+        });
 
-        var expenseExcelExportBtn = document.getElementById('expenseExcelExportBtn');
-        if (expenseExcelExportBtn) {
-            expenseExcelExportBtn.addEventListener('click', async function () {
-                await self.handleExcelExport();
-            });
-        }
+        this._on(document.getElementById('expenseExcelExportBtn'), 'click', async function () {
+            await self.handleExcelExport();
+        });
 
-        var expensePageSizeSelect = document.getElementById('expensePageSizeSelect');
-        if (expensePageSizeSelect) {
-            expensePageSizeSelect.addEventListener('change', async function () {
-                self.pagination.pageSize = Number(this.value || 10);
-                self.pagination.page = 1;
-                await self.loadExpenses();
-                self.renderPage();
-                self.bindEvents();
-            });
-        }
+        this._on(document.getElementById('expensePageSizeSelect'), 'change', async function () {
+            self.pagination.pageSize = Number(this.value || 10);
+            self.pagination.page = 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self.renderPage();
+            self.bindEvents();
+        });
 
-        var expensePrevPageBtn = document.getElementById('expensePrevPageBtn');
-        if (expensePrevPageBtn) {
-            expensePrevPageBtn.addEventListener('click', async function () {
-                if (self.pagination.page <= 1) return;
-                self.pagination.page -= 1;
-                await self.loadExpenses();
-                self.renderPage();
-                self.bindEvents();
-            });
-        }
+        this._on(document.getElementById('expensePrevPageBtn'), 'click', async function () {
+            if (self.pagination.page <= 1) return;
+            self.pagination.page -= 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self.renderPage();
+            self.bindEvents();
+        });
 
-        var expenseNextPageBtn = document.getElementById('expenseNextPageBtn');
-        if (expenseNextPageBtn) {
-            expenseNextPageBtn.addEventListener('click', async function () {
-                if (self.pagination.page >= self.pagination.totalPages) return;
-                self.pagination.page += 1;
-                await self.loadExpenses();
-                self.renderPage();
-                self.bindEvents();
-            });
-        }
+        this._on(document.getElementById('expenseNextPageBtn'), 'click', async function () {
+            if (self.pagination.page >= self.pagination.totalPages) return;
+            self.pagination.page += 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self.renderPage();
+            self.bindEvents();
+        });
 
-        var closeExpenseViewModalBtn = document.getElementById('closeExpenseViewModalBtn');
-        if (closeExpenseViewModalBtn) {
-            closeExpenseViewModalBtn.addEventListener('click', function () {
-                self.closeViewModal();
-            });
-        }
+        this._on(document.getElementById('closeExpenseViewModalBtn'), 'click', function () {
+            self.closeViewModal();
+        });
 
         var expenseViewModalOverlay = document.getElementById('expenseViewModalOverlay');
-        if (expenseViewModalOverlay) {
-            expenseViewModalOverlay.addEventListener('click', function (e) {
-                if (e.target === expenseViewModalOverlay) {
-                    self.closeViewModal();
-                }
-            });
-        }
+        this._on(expenseViewModalOverlay, 'click', function (e) {
+            if (e.target === expenseViewModalOverlay) self.closeViewModal();
+        });
 
-        var cancelDeleteExpenseBtn = document.getElementById('cancelDeleteExpenseBtn');
-        if (cancelDeleteExpenseBtn) {
-            cancelDeleteExpenseBtn.addEventListener('click', function () {
-                self.closeConfirmModal();
-            });
-        }
+        this._on(document.getElementById('cancelDeleteExpenseBtn'), 'click', function () {
+            self.closeConfirmModal();
+        });
 
-        var confirmDeleteExpenseBtn = document.getElementById('confirmDeleteExpenseBtn');
-        if (confirmDeleteExpenseBtn) {
-            confirmDeleteExpenseBtn.addEventListener('click', async function () {
-                await self.confirmDeleteExpense();
-            });
-        }
+        this._on(document.getElementById('confirmDeleteExpenseBtn'), 'click', async function () {
+            await self.confirmDeleteExpense();
+        });
 
         var expenseConfirmModalOverlay = document.getElementById('expenseConfirmModalOverlay');
-        if (expenseConfirmModalOverlay) {
-            expenseConfirmModalOverlay.addEventListener('click', function (e) {
-                if (e.target === expenseConfirmModalOverlay) {
-                    self.closeConfirmModal();
-                }
-            });
-        }
+        this._on(expenseConfirmModalOverlay, 'click', function (e) {
+            if (e.target === expenseConfirmModalOverlay) self.closeConfirmModal();
+        });
 
         document.querySelectorAll('.expense-view-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            self._on(btn, 'click', function () {
                 self.handleViewExpense(this.dataset.id);
             });
         });
 
         document.querySelectorAll('.expense-delete-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            self._on(btn, 'click', function () {
                 self.openConfirmModal(this.dataset.id);
             });
         });
 
         document.querySelectorAll('.expense-month-view-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            self._on(btn, 'click', function () {
                 self.handleViewMonth(this.dataset.month);
             });
         });
@@ -1375,18 +1333,25 @@ window.ExpensesView = {
                 return;
             }
 
+            var selectedCategory = (this.categories || []).find(function (c) { return c.id === categoryId; });
+            var categoryName = selectedCategory ? selectedCategory.name : null;
+
             await window.ExpensesService.create({
                 date: date,
                 amount: amount,
                 category_id: categoryId,
+                category_name: categoryName,
                 description: description
             });
+
+            if (!this._isActive) return;
 
             this.resetExpenseForm();
             this.closeExpenseModal();
             this.pagination.page = 1;
 
             await this.loadExpenses();
+            if (!this._isActive) return;
             this.renderPage();
             this.bindEvents();
 
@@ -1420,6 +1385,7 @@ window.ExpensesView = {
         }
 
         await this.loadExpenses();
+        if (!this._isActive) return;
         this.renderPage();
         this.bindEvents();
     },
@@ -1432,6 +1398,7 @@ window.ExpensesView = {
         this.filters.endDate = dailyRange.endDate;
 
         await this.loadExpenses();
+        if (!this._isActive) return;
         this.renderPage();
         this.bindEvents();
     },
@@ -1464,7 +1431,7 @@ window.ExpensesView = {
             return;
         }
 
-        var categoryName = row.categories && row.categories.name ? row.categories.name : 'Kategori yok';
+        var categoryName = (row.categories && row.categories.name) ? row.categories.name : (row.category_name || 'Kategori yok');
 
         var html =
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">' +
@@ -1540,6 +1507,19 @@ window.ExpensesView = {
         this.openViewModal(html);
     },
 
+    destroy() {
+        this._isActive = false;
+        this._removeAllListeners();
+        if (this.toastTimer) {
+            clearTimeout(this.toastTimer);
+            this.toastTimer = null;
+        }
+        this.container = null;
+        this.expenses = [];
+        this.groupedMonthlyExpenses = [];
+        this.pendingDeleteId = null;
+    },
+
     async confirmDeleteExpense() {
         if (!this.pendingDeleteId) return;
 
@@ -1558,6 +1538,7 @@ window.ExpensesView = {
             }
 
             await this.loadExpenses();
+            if (!this._isActive) return;
             this.renderPage();
             this.bindEvents();
 

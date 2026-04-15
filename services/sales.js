@@ -93,7 +93,6 @@ window.SalesService = (function() {
                     return null;
                 }
 
-                // 🔥 COST SNAPSHOT — birim maliyet (unit cost)
                 const cost = toNumber(costMap.get(productId) || 0);
 
                 return {
@@ -103,7 +102,7 @@ window.SalesService = (function() {
                     quantity,
                     unit_price: unitPrice,
                     total,
-                    cost   // 🔥 BİRİM MALİYET — çarpım analytics tarafında yapılır
+                    cost
                 };
             })
             .filter(Boolean);
@@ -121,7 +120,8 @@ window.SalesService = (function() {
         return await window.SupabaseService.query('sales', {
             ...options,
             filters: baseFilters,
-            order: { column: 'date', asc: false }
+            order: { column: 'date', asc: false },
+            select: options.select || 'id,date,total,cash,card,created_at'
         });
     }
 
@@ -139,14 +139,11 @@ window.SalesService = (function() {
         return await window.SupabaseService.query('sales', {
             ...options,
             filters: baseFilters,
-            order: { column: 'date', asc: false }
+            order: { column: 'date', asc: false },
+            select: options.select || 'id,date,total,cash,card,created_at'
         });
     }
 
-    /**
-     * Ürün satırlarından RPC'ye gönderilecek products dizisini oluşturur.
-     * Cost snapshot burada yapılır — birim maliyet yazılır.
-     */
     function buildProductsForRpc(lines, costMap) {
         return lines
             .map(function (line) {
@@ -157,7 +154,6 @@ window.SalesService = (function() {
 
                 if (!productId || quantity <= 0) return null;
 
-                // 🔥 COST SNAPSHOT — birim maliyet (unit cost)
                 const cost = toNumber(costMap.get(productId) || 0);
 
                 return {
@@ -181,7 +177,6 @@ window.SalesService = (function() {
         const salePayload = buildSalePayload(sale);
         const lines = extractProductLines(sale);
 
-        // TOTAL HESAP
         let computedTotal = 0;
         lines.forEach(line => {
             const q = toNumber(line.quantity ?? line.qty ?? line.adet);
@@ -193,12 +188,21 @@ window.SalesService = (function() {
             salePayload.total = computedTotal;
         }
 
-        // Ürün satırı yoksa → basit insert (transaction gereksiz)
         if (!lines.length) {
-            return await window.SupabaseService.insert('sales', salePayload);
+            const insertResult = await window.SupabaseService.insert('sales', salePayload);
+
+            if (!insertResult.error) {
+                if (window.ViewCache) {
+                    window.ViewCache.invalidate('sales:' + tenantId);
+                    window.ViewCache.invalidate('dashboard:' + tenantId);
+                }
+
+                window.dispatchEvent(new Event('sales:updated'));
+            }
+
+            return insertResult;
         }
 
-        // 🔥 COST MAP LOAD
         let costMap;
         try {
             costMap = await loadProductCostMap();
@@ -217,7 +221,6 @@ window.SalesService = (function() {
             return { data: null, error: 'Supabase client bulunamadı' };
         }
 
-        // 🔥 ATOMIC: sale + product_sales tek transaction
         try {
             const { data, error } = await client.rpc('create_sales_atomic', {
                 p_tenant_id: tenantId,
@@ -236,8 +239,15 @@ window.SalesService = (function() {
                 return { data: null, error: error.message || error };
             }
 
-            // RPC returns array — tek satış için ilk elemanı al
             const result = Array.isArray(data) ? data[0] : data;
+
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:' + tenantId);
+                window.ViewCache.invalidate('dashboard:' + tenantId);
+            }
+
+            window.dispatchEvent(new Event('sales:updated'));
+
             return { data: result || null, error: null };
         } catch (err) {
             return { data: null, error: err?.message || 'Satış oluşturulurken hata oluştu' };
@@ -249,12 +259,122 @@ window.SalesService = (function() {
     }
 
     async function remove(id) {
-        // Soft delete: is_deleted = true
-        // product_sales CASCADE üzerinden korunur (sale silinmiyor)
         return await window.SupabaseService.update('sales', id, {
             is_deleted: true
         });
     }
 
-    return { getAll, getByDateRange, create, update, remove };
+    async function getFullBackup() {
+        const tenantId = getTenantId();
+
+        if (!tenantId) {
+            return { ok: false, message: 'Tenant bulunamadı' };
+        }
+
+        try {
+            const salesResult = await window.SupabaseService.query('sales', {
+                filters: [{ op: 'eq', column: 'is_deleted', value: false }]
+            });
+
+            const productSalesResult = await window.SupabaseService.query('product_sales', {
+                filters: []
+            });
+
+            const expensesResult = await window.SupabaseService.query('expenses', {
+                filters: []
+            });
+
+            const productsResult = await window.SupabaseService.query('products', {
+                filters: []
+            });
+
+            if (salesResult.error || productSalesResult.error || expensesResult.error || productsResult.error) {
+                return { ok: false, message: 'Veri çekilemedi' };
+            }
+
+            return {
+                ok: true,
+                data: {
+                    sales: salesResult.data || [],
+                    product_sales: productSalesResult.data || [],
+                    expenses: expensesResult.data || [],
+                    products: productsResult.data || []
+                }
+            };
+
+        } catch (err) {
+            return { ok: false, message: err.message };
+        }
+    }
+
+    async function restoreFromBackup(backupData) {
+        const tenantId = getTenantId();
+
+        if (!tenantId) {
+            return { ok: false, message: 'Tenant bulunamadı' };
+        }
+
+        if (!backupData || typeof backupData !== 'object') {
+            return { ok: false, message: 'Geçersiz backup dosyası' };
+        }
+
+        const client = window.SupabaseService.getClient();
+        if (!client) {
+            return { ok: false, message: 'Supabase client yok' };
+        }
+
+        try {
+            const { data, error } = await client.rpc('restore_full_backup', {
+                backup: backupData,
+                tenant: tenantId
+            });
+
+            if (error) {
+                return { ok: false, message: error.message };
+            }
+
+            if (!data || data.success !== true) {
+                return { ok: false, message: 'Restore başarısız' };
+            }
+
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:' + tenantId);
+                window.ViewCache.invalidate('dashboard:' + tenantId);
+            }
+
+            window.dispatchEvent(new Event('sales:updated'));
+            window.dispatchEvent(new Event('expenses:updated'));
+            window.dispatchEvent(new Event('products:updated'));
+            window.dispatchEvent(new Event('dashboard:refresh'));
+
+            var ins = data.inserted || {};
+            var skp = data.skipped || {};
+            var msg = (ins.products || 0) + ' ürün, ' +
+                      (ins.sales || 0) + ' satış, ' +
+                      (ins.product_sales || 0) + ' ürün-satış, ' +
+                      (ins.expenses || 0) + ' gider eklendi';
+            var skTotal = (skp.products || 0) + (skp.sales || 0) + (skp.product_sales || 0) + (skp.expenses || 0);
+            if (skTotal > 0) {
+                msg += ' | ' + skTotal + ' kayıt zaten mevcuttu (atlandı)';
+            }
+
+            return {
+                ok: true,
+                message: msg
+            };
+
+        } catch (err) {
+            return { ok: false, message: err.message };
+        }
+    }
+
+    return { 
+        getAll, 
+        getByDateRange, 
+        create, 
+        update, 
+        remove,
+        getFullBackup,
+        restoreFromBackup
+    };
 })();

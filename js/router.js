@@ -10,7 +10,7 @@ window.Router = {
         'products':   { view: 'ProductsView',   title: 'Ürünler' },
         'expenses':   { view: 'ExpensesView',   title: 'Giderler' },
         'stock':      { view: 'StockView',      title: 'Stok' },
-        'events':     { view: 'EventsView',     title: 'Etkinlikler' },
+        'health':     { view: 'HealthView',      title: 'Saglik Raporu' },
         'calendar':   { view: 'CalendarView',   title: 'Takvim & Görevler' },
         'tasks':      { view: 'TasksView',      title: 'Görevler' },
         'reports':    { view: 'ReportsView',     title: 'Raporlar' },
@@ -18,8 +18,15 @@ window.Router = {
         'settings':   { view: 'SettingsView',    title: 'Ayarlar' }
     },
 
+    currentViewInstance: null,
+    _hashBound: false,
+    _loginHandlers: null,
+
     init() {
-        window.addEventListener('hashchange', () => this.navigate());
+        if (!this._hashBound) {
+            window.addEventListener('hashchange', () => this.navigate());
+            this._hashBound = true;
+        }
         this.navigate();
     },
 
@@ -37,7 +44,7 @@ window.Router = {
                 return;
             }
 
-            // Login view render
+            this._destroyCurrentView();
             this.renderLogin();
             return;
         }
@@ -60,6 +67,9 @@ window.Router = {
             console.error('View not found:', route.view);
             return;
         }
+
+        // Destroy previous view
+        this._destroyCurrentView();
 
         window.STATE.currentView = hash;
 
@@ -85,7 +95,24 @@ window.Router = {
         if (container) {
             container.innerHTML = '';
             viewObj.render(container);
+
+            if (typeof viewObj.init === 'function') {
+                viewObj.init(container);
+            }
+
+            this.currentViewInstance = viewObj;
         }
+    },
+
+    _destroyCurrentView() {
+        if (this.currentViewInstance && typeof this.currentViewInstance.destroy === 'function') {
+            try {
+                this.currentViewInstance.destroy();
+            } catch (e) {
+                console.error('View destroy error:', e);
+            }
+        }
+        this.currentViewInstance = null;
     },
 
     /* ============================================================
@@ -95,9 +122,13 @@ window.Router = {
     ============================================================ */
     renderLogin() {
         window.STATE.currentView = 'login';
+        this.currentViewInstance = null;
 
         // Topbar ve sub-header'ı gizle
         this.setAppChrome(false);
+
+        // Remove previous login handlers
+        this._cleanupLoginHandlers();
 
         var container = document.getElementById('viewContainer');
         if (!container) return;
@@ -130,28 +161,33 @@ window.Router = {
         var emailInput = document.getElementById('loginEmail');
         var passwordInput = document.getElementById('loginPassword');
 
+        var btnHandler = function () { window.Router.handleLogin(); };
+        var enterHandler = function (e) { if (e.key === 'Enter') window.Router.handleLogin(); };
+
+        this._loginHandlers = [];
+
         if (loginBtn) {
-            loginBtn.addEventListener('click', function () {
-                window.Router.handleLogin();
-            });
+            loginBtn.addEventListener('click', btnHandler);
+            this._loginHandlers.push({ el: loginBtn, event: 'click', fn: btnHandler });
         }
 
-        // Enter tuşu ile login
         if (passwordInput) {
-            passwordInput.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') {
-                    window.Router.handleLogin();
-                }
-            });
+            passwordInput.addEventListener('keydown', enterHandler);
+            this._loginHandlers.push({ el: passwordInput, event: 'keydown', fn: enterHandler });
         }
 
         if (emailInput) {
-            emailInput.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') {
-                    window.Router.handleLogin();
-                }
-            });
+            emailInput.addEventListener('keydown', enterHandler);
+            this._loginHandlers.push({ el: emailInput, event: 'keydown', fn: enterHandler });
         }
+    },
+
+    _cleanupLoginHandlers() {
+        if (!this._loginHandlers) return;
+        this._loginHandlers.forEach(function (h) {
+            h.el.removeEventListener(h.event, h.fn);
+        });
+        this._loginHandlers = null;
     },
 
     async handleLogin() {
@@ -193,7 +229,10 @@ window.Router = {
                 return;
             }
 
-            // Login başarılı — bootstrap'i tekrar çalıştır
+            // Login başarılı — cleanup login handlers
+            this._cleanupLoginHandlers();
+
+            // Bootstrap'i tekrar çalıştır
             await window.AppBootstrap.afterLogin();
 
         } catch (err) {

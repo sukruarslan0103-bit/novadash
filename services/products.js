@@ -1,13 +1,11 @@
 /* ============================================================
    PRODUCTS SERVICE — CRUD Operations + Performance Analytics
+   Client-side tenant kullanimi YOK.
+   tenant_id backend'de (SupabaseService + RPC + RLS) resolve edilir.
    ============================================================ */
 
 window.ProductsService = (function () {
     'use strict';
-
-    function getTenantId() {
-        return window.STATE && window.STATE.tenant ? window.STATE.tenant.id : null;
-    }
 
     function toNumber(value) {
         var n = Number(value);
@@ -36,15 +34,6 @@ window.ProductsService = (function () {
     async function getAll(options) {
         options = options || {};
 
-        var tenantId = getTenantId();
-
-        if (!tenantId) {
-            return {
-                data: null,
-                error: 'Tenant bulunamadı'
-            };
-        }
-
         var defaults = {
             filters: [
                 { op: 'eq', column: 'is_deleted', value: false }
@@ -64,17 +53,7 @@ window.ProductsService = (function () {
     async function getPerformanceSummary(options) {
         options = options || {};
 
-        var tenantId = getTenantId();
-
-        if (!tenantId) {
-            return {
-                data: [],
-                error: 'Tenant bulunamadı'
-            };
-        }
-
         var cacheKey = [
-            tenantId,
             normalizeDate(options.startDate),
             normalizeDate(options.endDate)
         ].join('|');
@@ -101,7 +80,6 @@ window.ProductsService = (function () {
 
         try {
             var res = await client.rpc('get_product_performance_summary', {
-                p_tenant_id: tenantId,
                 p_start: normalizeDate(options.startDate) || null,
                 p_end: normalizeDate(options.endDate) || null
             });
@@ -134,15 +112,6 @@ window.ProductsService = (function () {
     async function getTopSelling(limit, options) {
         limit = Number(limit) || 5;
         options = options || {};
-
-        var tenantId = getTenantId();
-
-        if (!tenantId) {
-            return {
-                data: [],
-                error: 'Tenant bulunamadı'
-            };
-        }
 
         var perfResult = await getPerformanceSummary(options);
 
@@ -186,17 +155,7 @@ window.ProductsService = (function () {
     }
 
     async function create(product) {
-        var tenantId = getTenantId();
-
-        if (!tenantId) {
-            return {
-                data: null,
-                error: 'Tenant bulunamadı'
-            };
-        }
-
         clearPerformanceCache();
-
         return await window.SupabaseService.insert('products', product);
     }
 

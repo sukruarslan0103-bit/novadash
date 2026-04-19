@@ -125,12 +125,24 @@ window.SalesService = (function() {
         });
     }
 
+    function computeEndExclusive(endStr) {
+        if (!endStr) return '';
+        var d = new Date(endStr + 'T00:00:00Z');
+        if (isNaN(d.getTime())) return endStr;
+        d.setUTCDate(d.getUTCDate() + 1);
+        return d.toISOString().slice(0, 10);
+    }
+
     async function getByDateRange(startDate, endDate, options = {}) {
+        var startStr = normalizeDate(startDate);
+        var endStr   = normalizeDate(endDate);
+        var endExclusive = computeEndExclusive(endStr);
+
         var baseFilters = [
-            { op: 'eq', column: 'is_deleted', value: false },
-            { op: 'gte', column: 'date', value: startDate },
-            { op: 'lte', column: 'date', value: endDate }
+            { op: 'eq', column: 'is_deleted', value: false }
         ];
+        if (startStr) baseFilters.push({ op: 'gte', column: 'date', value: startStr });
+        if (endExclusive) baseFilters.push({ op: 'lt',  column: 'date', value: endExclusive });
 
         if (Array.isArray(options.filters)) {
             baseFilters = baseFilters.concat(options.filters);
@@ -142,6 +154,45 @@ window.SalesService = (function() {
             order: { column: 'date', asc: false },
             select: options.select || 'id,date,total,cash,card,created_at'
         });
+    }
+
+    async function getAllByDateRange(startDate, endDate) {
+        const PAGE_SIZE = 1000;
+        let page = 1;
+        let all = [];
+        let total = 0;
+
+        var startStr = normalizeDate(startDate);
+        var endStr   = normalizeDate(endDate);
+        var endExclusive = computeEndExclusive(endStr);
+
+        var baseFilters = [
+            { op: 'eq', column: 'is_deleted', value: false }
+        ];
+        if (startStr) baseFilters.push({ op: 'gte', column: 'date', value: startStr });
+        if (endExclusive) baseFilters.push({ op: 'lt',  column: 'date', value: endExclusive });
+
+        while (true) {
+            const res = await window.SupabaseService.query('sales', {
+                filters: baseFilters,
+                order: { column: 'date', asc: false },
+                select: 'id,date,total,cash,card,created_at',
+                page: page,
+                pageSize: PAGE_SIZE,
+                count: true
+            });
+
+            if (res.error) return { data: [], error: res.error, count: 0 };
+
+            const chunk = Array.isArray(res.data) ? res.data : [];
+            all = all.concat(chunk);
+            total = Number(res.count || 0);
+
+            if (chunk.length < PAGE_SIZE || all.length >= total) break;
+            page++;
+        }
+
+        return { data: all, error: null, count: total };
     }
 
     function buildProductsForRpc(lines, costMap) {
@@ -223,7 +274,6 @@ window.SalesService = (function() {
 
         try {
             const { data, error } = await client.rpc('create_sales_atomic', {
-                p_tenant_id: tenantId,
                 p_sales: [{
                     date: normalizeDate(salePayload.date),
                     total: toNumber(salePayload.total),
@@ -368,10 +418,11 @@ window.SalesService = (function() {
         }
     }
 
-    return { 
-        getAll, 
-        getByDateRange, 
-        create, 
+    return {
+        getAll,
+        getByDateRange,
+        getAllByDateRange,
+        create,
         update, 
         remove,
         getFullBackup,

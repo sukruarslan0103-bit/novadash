@@ -14,7 +14,6 @@ window.Router = {
         'calendar':   { view: 'CalendarView',   title: 'Takvim & Görevler' },
         'tasks':      { view: 'TasksView',      title: 'Görevler' },
         'reports':    { view: 'ReportsView',     title: 'Raporlar' },
-        'transfer':   { view: 'TransferView',   title: 'Aktarma' },
         'settings':   { view: 'SettingsView',    title: 'Ayarlar' }
     },
 
@@ -32,6 +31,7 @@ window.Router = {
 
     navigate() {
         const hash = (window.location.hash || '#dashboard').replace('#', '');
+        console.log('[Router] navigate →', hash);
 
         /* ============================================================
            AUTH GUARD
@@ -64,9 +64,11 @@ window.Router = {
 
         const viewObj = window[route.view];
         if (!viewObj || typeof viewObj.render !== 'function') {
-            console.error('View not found:', route.view);
+            console.error('[Router] View not found:', route.view, 'hash:', hash,
+                '| window.' + route.view + ' =', window[route.view]);
             return;
         }
+        console.log('[Router] rendering view:', route.view);
 
         // Destroy previous view
         this._destroyCurrentView();
@@ -92,6 +94,24 @@ window.Router = {
 
         // Render
         const container = document.getElementById('viewContainer');
+        if (!container) {
+            console.error('[Router] #viewContainer bulunamadı');
+            return;
+        }
+
+        // Explicit tasks handler (diagnostik + garanti)
+        if (hash === 'tasks') {
+            console.log('[Router] rendering TasksView');
+            container.innerHTML = '';
+            if (window.TasksView && typeof window.TasksView.render === 'function') {
+                window.TasksView.render(container);
+                this.currentViewInstance = window.TasksView;
+                return;
+            }
+            console.error('[Router] window.TasksView tanımlı değil!');
+            return;
+        }
+
         if (container) {
             container.innerHTML = '';
             viewObj.render(container);

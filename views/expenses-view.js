@@ -372,12 +372,12 @@ window.ExpensesView = {
             this.pagination.pageSize
         );
 
-        var rows = result.rows || [];
+        var rows = result.data || [];
         this.expenses = [];
         this.groupedMonthlyExpenses = rows;
 
-        var totalMonths = Number(result.totalMonths || 0);
-        var totalPages = Number(result.totalPages || 1);
+        var totalMonths = Number(result.count || 0);
+        var totalPages = Math.max(1, Math.ceil(totalMonths / this.pagination.pageSize));
 
         if (this.pagination.page > totalPages) {
             this.pagination.page = totalPages;
@@ -444,7 +444,7 @@ window.ExpensesView = {
     getVisibleTotalExpense() {
         if (this.filters.mode === 'monthly') {
             return (this.groupedMonthlyExpenses || []).reduce(function (sum, row) {
-                return sum + Number(row.totalAmount || 0);
+                return sum + Number(row.total || 0);
             }, 0);
         }
 
@@ -947,11 +947,11 @@ window.ExpensesView = {
                     rows.map(function (row) {
                         return '' +
                             '<tr>' +
-                                '<td>' + self.escapeHtml(self.formatMonthLabel(row.monthKey)) + '</td>' +
-                                '<td>' + self.escapeHtml(self.formatCurrency(row.totalAmount)) + '</td>' +
-                                '<td>' + Number(row.recordCount || 0).toLocaleString('tr-TR') + '</td>' +
+                                '<td>' + self.escapeHtml(self.formatMonthLabel(row.month)) + '</td>' +
+                                '<td>' + self.escapeHtml(self.formatCurrency(row.total)) + '</td>' +
+                                '<td>' + Number(row.count || 0).toLocaleString('tr-TR') + '</td>' +
                                 '<td>' +
-                                    '<button type="button" class="card-action-btn expense-month-view-btn" data-month="' + self.escapeHtml(row.monthKey) + '">Görüntüle</button>' +
+                                    '<button type="button" class="card-action-btn expense-month-view-btn" data-month="' + self.escapeHtml(row.month) + '">Görüntüle</button>' +
                                 '</td>' +
                             '</tr>';
                     }).join('') +
@@ -1458,7 +1458,7 @@ window.ExpensesView = {
 
     handleViewMonth(monthKey) {
         var row = (this.groupedMonthlyExpenses || []).find(function (item) {
-            return String(item.monthKey) === String(monthKey);
+            return String(item.month) === String(monthKey);
         });
 
         if (!row) {
@@ -1466,42 +1466,16 @@ window.ExpensesView = {
             return;
         }
 
-        var dailyRows = row.dailyTotals || [];
         var html =
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">' +
                 '<div style="padding:14px;border:1px solid #E2E8F0;border-radius:14px;background:#F8FAFC;">' +
                     '<div style="font-size:12px;font-weight:700;color:#64748B;">AY</div>' +
-                    '<div style="margin-top:6px;font-size:18px;font-weight:800;color:#0F172A;">' + this.escapeHtml(this.formatMonthLabel(row.monthKey)) + '</div>' +
+                    '<div style="margin-top:6px;font-size:18px;font-weight:800;color:#0F172A;">' + this.escapeHtml(this.formatMonthLabel(row.month)) + '</div>' +
                 '</div>' +
                 '<div style="padding:14px;border:1px solid #E2E8F0;border-radius:14px;background:#F8FAFC;">' +
                     '<div style="font-size:12px;font-weight:700;color:#64748B;">TOPLAM GİDER</div>' +
-                    '<div style="margin-top:6px;font-size:24px;font-weight:800;color:#16A34A;">' + this.escapeHtml(this.formatCurrency(row.totalAmount)) + '</div>' +
+                    '<div style="margin-top:6px;font-size:24px;font-weight:800;color:#16A34A;">' + this.escapeHtml(this.formatCurrency(row.total)) + '</div>' +
                 '</div>' +
-            '</div>' +
-
-            '<div style="border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;">' +
-                '<table class="product-table" style="margin:0;">' +
-                    '<thead>' +
-                        '<tr>' +
-                            '<th>Gün</th>' +
-                            '<th>Günlük Toplam Gider</th>' +
-                            '<th>Kayıt Sayısı</th>' +
-                        '</tr>' +
-                    '</thead>' +
-                    '<tbody>' +
-                        (dailyRows.length
-                            ? dailyRows.map(function (dayRow) {
-                                return '' +
-                                    '<tr>' +
-                                        '<td>' + window.ExpensesView.escapeHtml(window.ExpensesView.formatDate(dayRow.date)) + '</td>' +
-                                        '<td>' + window.ExpensesView.escapeHtml(window.ExpensesView.formatCurrency(dayRow.totalAmount)) + '</td>' +
-                                        '<td>' + Number(dayRow.recordCount || 0).toLocaleString('tr-TR') + '</td>' +
-                                    '</tr>';
-                            }).join('')
-                            : '<tr><td colspan="3" style="text-align:center;color:#64748B;">Günlük veri yok</td></tr>'
-                        ) +
-                    '</tbody>' +
-                '</table>' +
             '</div>';
 
         this.openViewModal(html);

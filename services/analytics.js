@@ -314,11 +314,12 @@ window.AnalyticsService = {
     },
 
     change(current, previous) {
-        if (previous === 0) {
-            if (current === 0) return 0;
-            return null;
-        }
-        return ((current - previous) / Math.abs(previous)) * 100;
+        // prev === 0 → sonsuzluğa bölme (Infinity) yerine 0 dön.
+        // Bu, KPI kartlarında "%Infinity" / "NaN" gösterimini engeller.
+        var prev = Number(previous || 0);
+        var curr = Number(current || 0);
+        if (prev === 0) return 0;
+        return ((curr - prev) / Math.abs(prev)) * 100;
     },
 
     margin(profit, revenue) {
@@ -568,34 +569,25 @@ window.AnalyticsService = {
         var start = this.monthStart(now);
         var end = this.monthEnd(now);
 
-        var prev = new Date();
-        prev.setMonth(prev.getMonth() - 1);
-
-        var prevStart = this.monthStart(prev);
-        var prevEnd = this.monthEnd(prev);
-
+        // Yerel hesaplamalar için tarih (DB artık almıyor — client'ta kullanılıyor)
         var today = this.today();
-        var yesterday = this.yesterday();
 
-        var weekStartDate = new Date();
-        weekStartDate.setDate(weekStartDate.getDate() - 6);
-        var weekStart = this.iso(weekStartDate);
-
-        // === SINGLE RPC — tüm aggregation DB'de ===
-        var res = await this.client().rpc('get_dashboard_analytics', {
-            p_tenant_id: this.tenantId(),
-            p_current_start: start,
-            p_current_end: end,
-            p_prev_start: prevStart,
-            p_prev_end: prevEnd,
-            p_today: today,
-            p_yesterday: yesterday,
-            p_week_start: weekStart
-        });
+        // === SINGLE RPC — yeni imza: sadece (p_start, p_end) ===
+        var res;
+        try {
+            res = await this.client().rpc('get_dashboard_analytics', {
+                p_start: start,
+                p_end: end
+            });
+        } catch (err) {
+            console.warn('[analytics] get_dashboard_analytics rpc threw:', err && err.message ? err.message : err);
+            res = { data: null, error: err };
+        }
 
         this.assertResponse(res, 'Dashboard verisi alınamadı');
 
-        var d = res.data || {};
+        // DB yeni imzada daraltılmış response dönebilir — tüm alanlar null-safe parse edilir
+        var d = (res && res.data) || {};
 
         // === PARSE AGGREGATED VALUES ===
         var monthlyRevenue = Number(d.monthly_revenue || 0);

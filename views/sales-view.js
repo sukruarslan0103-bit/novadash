@@ -282,18 +282,6 @@ window.SalesView = {
     async loadData(forceRefresh) {
         var fetchKey = this._buildFetchKey();
 
-        // Aynı oturum içinde tekrar render
-        if (false && !forceRefresh && fetchKey === this._lastFetchKey && this.salesData.length > 0) {
-            this.renderSummary();
-            this.renderTable();
-            if (this.totalCount > 0) {
-                this.setStatus(this.totalCount + ' satış kaydı bulundu.', 'success');
-            } else {
-                this.setStatus('Seçili tarih aralığında satış kaydı bulunamadı.', 'info');
-            }
-            return;
-        }
-
         // Gerçek cache kontrolü
         if (!forceRefresh && window.ViewCache) {
             var cached = window.ViewCache.get(fetchKey);
@@ -347,15 +335,18 @@ window.SalesView = {
             this.totalCount = result.count || this.salesData.length;
             this.totalPages = result.totalPages || 1;
 
-            if (this.viewMode === 'daily') {
-                await this.loadProductSalesForPage();
-            } else {
-                await this.loadProductSales();
-            }
+            // await this.loadProductSalesForPage();
 
             if (!this._isActive) return;
 
             this._rebuildCostMap();
+
+            if (this.viewMode === 'daily') {
+                await this.loadKpiTotals();
+                if (!this._isActive) return;
+            } else {
+                this._kpiTotals = null;
+            }
 
             this._lastFetchKey = fetchKey;
             this._saveToCache(fetchKey);
@@ -435,23 +426,7 @@ window.SalesView = {
     },
 
     async loadProductSales() {
-        this.productSalesData = [];
-
-        try {
-            const { data, error } = await window.SupabaseService.query('product_sales', {
-                filters: [
-                    { op: 'gte', column: 'date', value: this.filterStart },
-                    { op: 'lte', column: 'date', value: this.filterEnd }
-                ],
-                order: { column: 'date', asc: true }
-            });
-
-            if (!error && Array.isArray(data)) {
-                this.productSalesData = data;
-            }
-        } catch (err) {
-            console.error('Product sales load error:', err);
-        }
+        return this.loadProductSalesForPage();
     },
 
     async loadProductSalesForPage() {
@@ -559,13 +534,73 @@ window.SalesView = {
         });
     },
 
+    async loadKpiTotals() {
+        this._kpiTotals = null;
+
+        try {
+            const salesRes = await window.SalesService.getAllByDateRange(
+                this.filterStart, this.filterEnd
+            );
+
+            if (salesRes.error || !Array.isArray(salesRes.data)) return;
+
+            const allSales = salesRes.data;
+            const saleIds = allSales.map(s => s.id).filter(Boolean);
+
+            let totalRevenue = 0;
+            for (const s of allSales) {
+                totalRevenue += Number(s.total) || 0;
+            }
+
+            let totalCost = 0;
+            if (saleIds.length) {
+                const CHUNK = 500;
+                for (let i = 0; i < saleIds.length; i += CHUNK) {
+                    const slice = saleIds.slice(i, i + CHUNK);
+                    let p = 1;
+                    while (true) {
+                        const psRes = await window.SupabaseService.query('product_sales', {
+                            filters: [{ op: 'in', column: 'sale_id', value: slice }],
+                            pageSize: 1000,
+                            page: p,
+                            count: true
+                        });
+                        if (psRes.error || !Array.isArray(psRes.data)) break;
+                        for (const ps of psRes.data) {
+                            const qty = Number(ps.quantity) || 0;
+                            const cost = Number(ps.cost) || 0;
+                            totalCost += qty * cost;
+                        }
+                        const psTotal = Number(psRes.count || 0);
+                        if (psRes.data.length < 1000 || p * 1000 >= psTotal) break;
+                        p++;
+                    }
+                }
+            }
+
+            this._kpiTotals = { totalRevenue, totalCost };
+        } catch (err) {
+            console.error('KPI totals load error:', err);
+            this._kpiTotals = null;
+        }
+    },
+
     renderSummary() {
         const el = document.getElementById('salesSummaryCards');
         if (!el) return;
 
-        const rows = this.getDisplayRows();
-        const totalRevenue = rows.reduce((s, r) => s + r.total, 0);
-        const totalCost = rows.reduce((s, r) => s + r.cost, 0);
+        let totalRevenue = 0;
+        let totalCost = 0;
+
+        if (this.viewMode === 'daily' && this._kpiTotals) {
+            totalRevenue = this._kpiTotals.totalRevenue || 0;
+            totalCost = this._kpiTotals.totalCost || 0;
+        } else {
+            const rows = this.getDisplayRows();
+            totalRevenue = rows.reduce((s, r) => s + r.total, 0);
+            totalCost = rows.reduce((s, r) => s + r.cost, 0);
+        }
+
         const totalProfit = totalRevenue - totalCost;
         const avgMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
@@ -785,6 +820,10 @@ window.SalesView = {
     },
 
     async showDetailById(saleId) {
+        if (!this.productSalesData.length) {
+            await this.loadProductSalesForPage();
+        }
+
         const modal = document.getElementById('salesDetailModal');
         const title = document.getElementById('modalTitle');
         const body = document.getElementById('modalBody');
@@ -1085,7 +1124,7 @@ window.SalesView = {
             }
 
             this.salesData = exportResult.data;
-            await this.loadProductSales();
+            await this.loadProductSalesForPage();
             if (!this._isActive) return;
             this._rebuildCostMap();
 

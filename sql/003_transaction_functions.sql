@@ -2,10 +2,15 @@
 -- 003 — Atomic Sale Creation
 -- Tek transaction içinde sale + product_sales oluşturur.
 -- Hem tekli satış hem toplu import için kullanılır.
+--
+-- Contract:
+--   Sadece (p_sales JSONB) alır.
+--   tenant_id → auth.uid() üzerinden users tablosundan resolve edilir.
+--   created_by = auth.uid() (her zaman gerçek kullanıcı).
+--   Client tenant_id / created_by spoofing yapamaz.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION create_sales_atomic(
-    p_tenant_id UUID,
     p_sales JSONB
 )
 RETURNS JSONB
@@ -13,57 +18,64 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 AS $$
 DECLARE
-    v_sale JSONB;
-    v_product JSONB;
-    v_sale_id UUID;
-    v_results JSONB := '[]'::jsonb;
+    v_auth_uid  UUID;
+    v_tenant_id UUID;
+    v_sale      JSONB;
+    v_product   JSONB;
+    v_sale_id   UUID;
+    v_results   JSONB := '[]'::jsonb;
     v_sale_record JSONB;
 BEGIN
-    -- Validate
-    IF p_tenant_id IS NULL THEN
-        RAISE EXCEPTION 'tenant_id is required';
+    -- === AUTH GUARD ===
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Unauthorized' USING ERRCODE = '42501';
     END IF;
 
+    SELECT tenant_id INTO v_tenant_id
+    FROM users
+    WHERE id = v_auth_uid;
+
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Tenant not found' USING ERRCODE = '42501';
+    END IF;
+
+    -- === INPUT VALIDATION ===
     IF p_sales IS NULL OR jsonb_array_length(p_sales) = 0 THEN
         RAISE EXCEPTION 'At least one sale is required';
     END IF;
 
+    -- === SALE LOOP ===
     FOR v_sale IN SELECT * FROM jsonb_array_elements(p_sales)
     LOOP
-        -- Insert sale
         INSERT INTO sales (tenant_id, date, total, cash, card, notes, created_by)
         VALUES (
-            p_tenant_id,
+            v_tenant_id,
             (v_sale->>'date')::DATE,
             COALESCE((v_sale->>'total')::NUMERIC, 0),
             COALESCE((v_sale->>'cash')::NUMERIC, 0),
             COALESCE((v_sale->>'card')::NUMERIC, 0),
             v_sale->>'notes',
-            CASE WHEN v_sale->>'created_by' IS NOT NULL
-                 THEN (v_sale->>'created_by')::UUID
-                 ELSE NULL END
+            v_auth_uid
         )
         RETURNING id INTO v_sale_id;
 
-        -- Insert product_sales (if any)
+        -- Insert product_sales (varsa)
         IF v_sale->'products' IS NOT NULL AND jsonb_array_length(v_sale->'products') > 0 THEN
-            FOR v_product IN SELECT * FROM jsonb_array_elements(v_sale->'products')
-            LOOP
-                INSERT INTO product_sales (
-                    tenant_id, sale_id, product_id, date,
-                    quantity, unit_price, total, cost
-                )
-                VALUES (
-                    p_tenant_id,
-                    v_sale_id,
-                    (v_product->>'product_id')::UUID,
-                    (v_sale->>'date')::DATE,
-                    COALESCE((v_product->>'quantity')::INT, 0),
-                    COALESCE((v_product->>'unit_price')::NUMERIC, 0),
-                    COALESCE((v_product->>'total')::NUMERIC, 0),
-                    COALESCE((v_product->>'cost')::NUMERIC, 0)
-                );
-            END LOOP;
+            INSERT INTO product_sales (
+                tenant_id, sale_id, product_id, date,
+                quantity, unit_price, total, cost
+            )
+            SELECT
+                v_tenant_id,
+                v_sale_id,
+                (prod->>'product_id')::UUID,
+                (v_sale->>'date')::DATE,
+                COALESCE((prod->>'quantity')::INT, 0),
+                COALESCE((prod->>'unit_price')::NUMERIC, 0),
+                COALESCE((prod->>'total')::NUMERIC, 0),
+                COALESCE((prod->>'cost')::NUMERIC, 0)
+            FROM jsonb_array_elements(v_sale->'products') AS prod;
         END IF;
 
         -- Build result with embedded product_sales

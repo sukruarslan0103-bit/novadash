@@ -1,16 +1,11 @@
 /* ============================================================
    EXPENSES SERVICE — CRUD Operations
+   Client-side tenant kullanimi YOK.
+   tenant_id backend'de (SupabaseService + RPC + RLS) resolve edilir.
    ============================================================ */
 
 window.ExpensesService = (function () {
     'use strict';
-
-    function tenantId() {
-        if (!window.STATE || !window.STATE.tenant || !window.STATE.tenant.id) {
-            throw new Error('Tenant bulunamadı');
-        }
-        return window.STATE.tenant.id;
-    }
 
     function normalizeDate(value) {
         if (!value) return null;
@@ -185,7 +180,6 @@ window.ExpensesService = (function () {
 
     async function create(expense) {
         const payload = {
-            tenant_id: tenantId(),
             date: expense.date,
             amount: Number(expense.amount || 0),
             description: expense.description || '',
@@ -241,14 +235,16 @@ window.ExpensesService = (function () {
         if (!client) throw new Error('Supabase client yok');
 
         const { data, error } = await client.rpc('get_monthly_expense_summary', {
-            p_tenant_id: tenantId(),
             p_page: page || 1,
             p_page_size: pageSize || 10
         });
 
         if (error) throw new Error(error.message || 'Aylık gider özeti alınamadı');
 
-        return data;
+        return {
+            data: data?.data || [],
+            count: data?.count || 0
+        };
     }
 
     return {

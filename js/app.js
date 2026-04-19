@@ -1,18 +1,11 @@
 /* ============================================================
    APP.JS — Application Entry Point
+   Production-safe: hiçbir dev fallback yok.
+   Auth yoksa → #login.
    ============================================================ */
 
 (function () {
     'use strict';
-
-    function isDevMode() {
-        if (!window.APP_CONFIG || window.APP_CONFIG.ENV !== 'development') return false;
-
-        var host = window.location.hostname;
-        if (host !== 'localhost' && host !== '127.0.0.1' && host !== '') return false;
-
-        return true;
-    }
 
     function setCurrentDate() {
         var dateEl = document.getElementById('currentDate');
@@ -29,7 +22,6 @@
         dateEl.textContent = now.toLocaleDateString('tr-TR', options);
     }
 
-    // 🔥 FIX
     function bindMobileMenu() {
         var menuBtn = document.getElementById('mobileMenuBtn');
         var nav = document.getElementById('topbarNav');
@@ -66,49 +58,50 @@
         }
     }
 
-    function loadDevTenant() {
-        if (!isDevMode()) {
-            console.warn('Auth oturumu bulunamadı. Login gerekli.');
-            return false;
+    /**
+     * Auth yoksa veya herhangi bir adım başarısızsa çağrılır.
+     * STATE'i temizler ve login ekranına yönlendirir.
+     * Geri dönüş: false (bootstrap başarısız)
+     */
+    function redirectToLogin() {
+        if (window.STATE) {
+            window.STATE.authenticated = false;
+            if (window.STATE.tenant) {
+                window.STATE.tenant.id = null;
+                window.STATE.tenant.name = '';
+            }
+            if (window.STATE.user) {
+                window.STATE.user.id = null;
+                window.STATE.user.email = null;
+                window.STATE.user.name = '';
+            }
         }
 
-        window.updateState('user.id', 'dev-user');
-        window.updateState('user.email', 'dev@local.test');
-        window.updateState('user.name', 'Anka');
-        window.updateState('user.role', 'owner');
-
-        window.updateState('tenant.id', '06b177ba-b248-4620-b25d-9364eb1af409');
-        window.updateState('tenant.name', 'Holly Stone Adana');
-        window.updateState('tenant.plan', 'starter');
-
-        window.STATE.authenticated = true;
-        window.STATE.devMode = true;
-
-        if (window.SupabaseService && window.SupabaseService.setTenantCache) {
-            window.SupabaseService.setTenantCache('06b177ba-b248-4620-b25d-9364eb1af409');
+        if (window.SupabaseService && window.SupabaseService.invalidateTenantCache) {
+            window.SupabaseService.invalidateTenantCache();
         }
 
-        applyUserAndTenantToUI();
+        if (window.location.hash !== '#login') {
+            window.location.hash = '#login';
+        }
 
-        console.warn('⚠️ DEV MODE aktif');
-        return true;
+        return false;
     }
 
     async function bootstrapSupabase() {
         if (!window.SupabaseService) {
-            return loadDevTenant();
+            return redirectToLogin();
         }
 
         window.SupabaseService.init();
 
         if (!window.SupabaseService.isConnected()) {
-            return loadDevTenant();
+            return redirectToLogin();
         }
 
         try {
             var user = await window.SupabaseService.getCurrentUser();
-
-            if (!user) return loadDevTenant();
+            if (!user) return redirectToLogin();
 
             window.updateState('user.id', user.id);
             window.updateState('user.email', user.email || null);
@@ -121,9 +114,10 @@
                 .eq('id', user.id)
                 .single();
 
-            if (userRes.error) return loadDevTenant();
+            if (userRes.error) return redirectToLogin();
 
             var userRow = userRes.data;
+            if (!userRow || !userRow.tenant_id) return redirectToLogin();
 
             window.updateState('user.name', userRow.full_name || 'Kullanıcı');
             window.updateState('user.role', userRow.role || 'owner');
@@ -135,9 +129,10 @@
                 .eq('id', userRow.tenant_id)
                 .single();
 
-            if (tenantRes.error) return loadDevTenant();
+            if (tenantRes.error) return redirectToLogin();
 
             var tenant = tenantRes.data;
+            if (!tenant) return redirectToLogin();
 
             window.updateState('tenant.name', tenant.name);
             window.updateState('tenant.plan', tenant.plan);
@@ -152,7 +147,8 @@
             return true;
 
         } catch (err) {
-            return loadDevTenant();
+            console.warn('[app] bootstrap failed:', err && err.message ? err.message : err);
+            return redirectToLogin();
         }
     }
 
@@ -169,14 +165,9 @@
             await window.SupabaseService.signOut();
         }
 
-        window.STATE.authenticated = false;
-        window.STATE.tenant.id = null;
-        window.STATE.user.id = null;
-
-        window.location.hash = '#login';
+        redirectToLogin();
     }
 
-    // 🔥 FIX
     function bindLogoutButton() {
         var logoutBtn = document.getElementById('logoutBtn');
         if (!logoutBtn) return;
@@ -198,8 +189,9 @@
     }
 
     window.AppBootstrap = {
-        afterLogin,
-        logout
+        afterLogin: afterLogin,
+        logout: logout,
+        redirectToLogin: redirectToLogin
     };
 
     if (document.readyState === 'loading') {

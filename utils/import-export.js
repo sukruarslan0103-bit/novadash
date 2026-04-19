@@ -543,6 +543,119 @@ window.ImportExport = (function () {
         return await importSalesRows(rows, productMap, 'restore_session');
     }
 
+    /* ============================================================
+       FULL BACKUP — export_all_data() / import_all_data()
+       Tenant is resolved server-side via auth.uid().
+       Atomic + idempotent (ON CONFLICT DO NOTHING).
+    ============================================================ */
+
+    const BACKUP_EXPORT_VERSION = '1.0';
+    const BACKUP_REQUIRED_TABLES = [
+        'categories', 'products', 'sales', 'product_sales',
+        'expenses', 'events', 'tasks', 'settings'
+    ];
+
+    function backupClient() {
+        return window.SupabaseService && window.SupabaseService.getClient
+            ? window.SupabaseService.getClient()
+            : null;
+    }
+
+    function triggerBackupDownload(payload) {
+        try {
+            const json = JSON.stringify(payload, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            a.href = url;
+            a.download = 'nova-backup-' + ts + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        } catch (e) {
+            console.warn('[backup] download failed:', e);
+        }
+    }
+
+    function validateBackupPayload(payload) {
+        if (!payload || typeof payload !== 'object') return 'Invalid JSON: not an object';
+        if (!payload.export_version) return 'Missing export_version';
+        if (payload.export_version !== BACKUP_EXPORT_VERSION) {
+            return 'Unsupported export_version: ' + payload.export_version;
+        }
+        if (!payload.data || typeof payload.data !== 'object') return 'Missing data block';
+        for (let i = 0; i < BACKUP_REQUIRED_TABLES.length; i++) {
+            const t = BACKUP_REQUIRED_TABLES[i];
+            if (payload.data[t] !== undefined && !Array.isArray(payload.data[t])) {
+                return 'Invalid shape: data.' + t + ' must be array';
+            }
+        }
+        return null;
+    }
+
+    async function exportAll(options) {
+        options = options || {};
+        const c = backupClient();
+        if (!c) return { ok: false, error: 'Supabase not initialized' };
+
+        try {
+            const { data, error } = await c.rpc('export_all_data');
+            if (error) return { ok: false, error: error.message || String(error) };
+            if (!data || typeof data !== 'object') return { ok: false, error: 'Empty export payload' };
+
+            if (options.download !== false) triggerBackupDownload(data);
+            return { ok: true, data: data };
+        } catch (err) {
+            return { ok: false, error: (err && err.message) || 'Export failed' };
+        }
+    }
+
+    async function importAll(input) {
+        const c = backupClient();
+        if (!c) return { ok: false, error: 'Supabase not initialized' };
+
+        let payload = null;
+        try {
+            if (input instanceof File || input instanceof Blob) {
+                payload = JSON.parse(await input.text());
+            } else if (typeof input === 'string') {
+                payload = JSON.parse(input);
+            } else if (input && typeof input === 'object') {
+                payload = input;
+            } else {
+                return { ok: false, error: 'Invalid input' };
+            }
+        } catch (e) {
+            return { ok: false, error: 'JSON parse failed: ' + (e.message || e) };
+        }
+
+        const invalid = validateBackupPayload(payload);
+        if (invalid) return { ok: false, error: invalid };
+
+        try {
+            const { data, error } = await c.rpc('import_all_data', { p_payload: payload });
+            if (error) return { ok: false, error: error.message || String(error) };
+            return { ok: true, result: data };
+        } catch (err) {
+            return { ok: false, error: (err && err.message) || 'Import failed' };
+        }
+    }
+
+    function pickBackupFile() {
+        return new Promise(function (resolve) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/json,.json';
+            input.onchange = function () {
+                const f = input.files && input.files[0];
+                resolve(f || null);
+            };
+            input.click();
+        });
+    }
+
     return {
         escapeHtml,
         normalizeProductName,
@@ -552,6 +665,12 @@ window.ImportExport = (function () {
         validateRowsAgainstProducts,
         importSalesRows,
         createSalesTemplate,
-        restoreFromBackup
+        restoreFromBackup,
+
+        BACKUP_EXPORT_VERSION: BACKUP_EXPORT_VERSION,
+        exportAll: exportAll,
+        importAll: importAll,
+        pickBackupFile: pickBackupFile,
+        validateBackupPayload: validateBackupPayload
     };
 })();

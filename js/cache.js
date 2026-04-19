@@ -37,6 +37,10 @@ window.ViewCache = {
      * Prefix ile eşleşen tüm kayıtları sil.
      * Prefix verilmezse tüm cache temizlenir.
      */
+    clear: function () {
+        this._store = {};
+    },
+
     invalidate: function (prefix) {
         if (!prefix) {
             this._store = {};

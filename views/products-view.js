@@ -321,11 +321,23 @@ window.ProductsView = {
                 return;
             }
 
+            var perfStart = window.Formatters && typeof window.Formatters.monthStart === 'function'
+                ? window.Formatters.monthStart() : null;
+            var perfEnd = window.Formatters && typeof window.Formatters.today === 'function'
+                ? window.Formatters.today() : null;
+
+            var perfPromise;
+            if (window.AnalyticsService && typeof window.AnalyticsService.getProductPerformanceSummary === 'function') {
+                perfPromise = window.AnalyticsService.getProductPerformanceSummary(perfStart, perfEnd)
+                    .then(function (data) { return { data: data, error: null }; })
+                    .catch(function (err) { return { data: [], error: err }; });
+            } else {
+                perfPromise = Promise.resolve({ data: [], error: null });
+            }
+
             var results = await Promise.all([
                 window.ProductsService.getAll(),
-                typeof window.ProductsService.getPerformanceSummary === 'function'
-                    ? window.ProductsService.getPerformanceSummary()
-                    : Promise.resolve({ data: [], error: null })
+                perfPromise
             ]);
             if (!this._isActive) return;
 
@@ -591,10 +603,14 @@ window.ProductsView = {
     },
 
     getProductMetrics: function (product) {
+        // Reads directly from the get_product_performance_summary RPC payload.
+        // No manual client-side aggregation — the RPC already returns
+        // quantity, revenue and estimated_profit using the historical cost
+        // snapshot stored on product_sales.cost (not the current product.cost).
         var item = this.performanceMap.get(String(product && product.id ? product.id : '')) || null;
         var quantity = Number(item && item.quantity) || 0;
         var revenue = Number(item && item.revenue) || 0;
-        var estimatedProfit = revenue - (quantity * (Number(product && product.cost) || 0));
+        var estimatedProfit = Number(item && item.estimated_profit) || 0;
 
         return {
             quantity: quantity,

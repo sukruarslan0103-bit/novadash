@@ -3,10 +3,14 @@
    Production-ready connection layer
    Uses config.js for credentials
    Features:
-   - Tenant ID caching (no repeat HTTP per CRUD)
    - softDelete support
    - real pagination / range support
    - onAuthStateChange cache invalidation
+
+   NOTE: Client is tenant-agnostic.
+   tenant_id filtreleme ve enjeksiyonu TAMAMEN backend'dedir
+   (RLS + RPC + auth.uid()). Bu dosya hiçbir yerde tenant_id
+   göndermez veya filtrelemez.
    ============================================================ */
 
 window.SupabaseService = (function () {
@@ -15,10 +19,9 @@ window.SupabaseService = (function () {
     let client = null;
 
     /* ============================================================
-       TENANT CACHE
-       Bootstrap sırasında bir kere çözümlenir.
-       Tüm sorgular cache'ten okur.
-       Auth state değiştiğinde invalidate olur.
+       TENANT CACHE (compat shim)
+       Eski cagirilari kirmamak icin korunuyor.
+       Ancak query / insert / update / delete hic kullanmiyor.
     ============================================================ */
     let cachedTenantId = null;
     let cacheReady = false;
@@ -47,6 +50,10 @@ window.SupabaseService = (function () {
 
         // Auth state değiştiğinde tenant cache'i invalidate et
         client.auth.onAuthStateChange(function (event) {
+            if (window.ViewCache && typeof window.ViewCache.clear === 'function') {
+                window.ViewCache.clear();
+            }
+
             if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
                 invalidateTenantCache();
             }
@@ -91,53 +98,60 @@ window.SupabaseService = (function () {
     }
 
     /* ============================================================
-       TENANT CACHE OPERATIONS
+       TENANT CACHE OPERATIONS (compat only)
+       query/insert/update/delete ARTIK KULLANMIYOR.
     ============================================================ */
 
-    /**
-     * Bootstrap sırasında çağrılır.
-     * Tenant ID'yi cache'e yazar.
-     */
     function setTenantCache(tenantId) {
         cachedTenantId = tenantId || null;
         cacheReady = true;
     }
 
-    /**
-     * Cache'i temizler. Sonraki getTenantId() yeniden çözümler.
-     */
     function invalidateTenantCache() {
         cachedTenantId = null;
         cacheReady = false;
     }
 
-    /* ============================================================
-       TENANT
-    ============================================================ */
-
+    /**
+     * KEPT FOR COMPATIBILITY ONLY.
+     * Yeni kodda kullanma. Tenant backend'de resolve edilir.
+     */
     async function getTenantId() {
         if (!client) return null;
 
-        // Cache hazırsa doğrudan dön
         if (cacheReady && cachedTenantId) {
             return cachedTenantId;
         }
 
-        // Cache hazır ama tenant yok
         if (cacheReady && !cachedTenantId) {
             return null;
         }
 
-        // Cache henüz yazılmamış — bootstrap henüz çalışmamış
-        // STATE'ten oku (bootstrap yazıyorsa orada olmalı)
-        var stateId = window.STATE?.tenant?.id || null;
-        if (stateId) {
-            setTenantCache(stateId);
-            return stateId;
-        }
+        try {
+            var user = await getCurrentUser();
+            if (!user || !user.id) {
+                setTenantCache(null);
+                return null;
+            }
 
-        // Hiçbir kaynak yok
-        return null;
+            var res = await client
+                .from('users')
+                .select('tenant_id')
+                .eq('id', user.id)
+                .single();
+
+            if (res.error || !res.data || !res.data.tenant_id) {
+                setTenantCache(null);
+                return null;
+            }
+
+            setTenantCache(res.data.tenant_id);
+            return res.data.tenant_id;
+        } catch (err) {
+            console.warn('[supabase] getTenantId resolve failed:', err && err.message ? err.message : err);
+            setTenantCache(null);
+            return null;
+        }
     }
 
     /* ============================================================
@@ -184,6 +198,8 @@ window.SupabaseService = (function () {
        - pageSize
        - range: { from, to }
        - count: true/false
+
+       Tenant filtresi YOK — RLS halleder.
     ============================================================ */
 
     async function query(table, options = {}) {
@@ -191,21 +207,6 @@ window.SupabaseService = (function () {
             return {
                 data: [],
                 error: 'Supabase not initialized',
-                count: 0,
-                page: 1,
-                pageSize: 0,
-                totalPages: 0,
-                from: 0,
-                to: 0
-            };
-        }
-
-        const tenantId = await getTenantId();
-
-        if (!tenantId) {
-            return {
-                data: [],
-                error: 'Tenant not found',
                 count: 0,
                 page: 1,
                 pageSize: 0,
@@ -228,8 +229,7 @@ window.SupabaseService = (function () {
 
             let q = client
                 .from(table)
-                .select(options.select || '*', wantsCount ? { count: 'exact' } : undefined)
-                .eq('tenant_id', tenantId);
+                .select(options.select || '*', wantsCount ? { count: 'exact' } : undefined);
 
             if (Array.isArray(options.filters)) {
                 options.filters.forEach((f) => {
@@ -368,18 +368,13 @@ window.SupabaseService = (function () {
 
     /* ============================================================
        INSERT
+       tenant_id enjekte edilmez — DB trigger / DEFAULT halleder.
     ============================================================ */
 
     async function insert(table, record) {
         if (!client) return { data: null, error: 'Supabase not initialized' };
 
-        const tenantId = await getTenantId();
-        if (!tenantId) return { data: null, error: 'Tenant not found' };
-
-        const payload = {
-            ...record,
-            tenant_id: tenantId
-        };
+        const payload = { ...record };
 
         return await client
             .from(table)
@@ -390,38 +385,32 @@ window.SupabaseService = (function () {
 
     /* ============================================================
        UPDATE
+       tenant filtresi YOK — RLS halleder.
     ============================================================ */
 
     async function update(table, id, updates) {
         if (!client) return { data: null, error: 'Supabase not initialized' };
 
-        const tenantId = await getTenantId();
-        if (!tenantId) return { data: null, error: 'Tenant not found' };
-
         return await client
             .from(table)
             .update(updates)
             .eq('id', id)
-            .eq('tenant_id', tenantId)
             .select()
             .single();
     }
 
     /* ============================================================
        DELETE
+       tenant filtresi YOK — RLS halleder.
     ============================================================ */
 
     async function remove(table, id) {
         if (!client) return { error: 'Supabase not initialized' };
 
-        const tenantId = await getTenantId();
-        if (!tenantId) return { error: 'Tenant not found' };
-
         return await client
             .from(table)
             .delete()
-            .eq('id', id)
-            .eq('tenant_id', tenantId);
+            .eq('id', id);
     }
 
     async function softDelete(table, id) {

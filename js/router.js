@@ -8,6 +8,7 @@ window.Router = {
         'dashboard':  { view: 'DashboardView',  title: 'Ana Sayfa' },
         'sales':      { view: 'SalesView',      title: 'Satışlar' },
         'products':   { view: 'ProductsView',   title: 'Ürünler' },
+        'raw-materials': { view: 'RawMaterialsView', title: 'Ham Maddeler' },
         'expenses':   { view: 'ExpensesView',   title: 'Giderler' },
         'stock':      { view: 'StockView',      title: 'Stok' },
         'health':     { view: 'HealthView',      title: 'Saglik Raporu' },

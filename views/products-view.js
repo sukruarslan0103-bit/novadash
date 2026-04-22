@@ -1,5 +1,6 @@
 /* ============================================================
    PRODUCTS VIEW — Product management + product performance
+   + Recipe Editor (product_recipes / raw_materials)
    ============================================================ */
 
 window.ProductsView = {
@@ -33,6 +34,17 @@ window.ProductsView = {
         confirmText: 'Tamam',
         cancelText: 'İptal',
         onConfirm: null
+    },
+
+    recipeState: {
+        open: false,
+        productId: null,
+        productName: '',
+        recipes: [],        // [{id, raw_material_id, quantity, raw_material:{name,unit,cost}}]
+        rawMaterials: [],   // [{id, name, unit, cost}]
+        loading: false,
+        saving: false,
+        error: ''
     },
 
     async render(container) {
@@ -78,8 +90,22 @@ window.ProductsView = {
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Maliyet (₺)</label>
-                        <input type="text" class="form-input" id="productCostInfo" value="Fatura / satın alma verisinden gelir" readonly>
+                        <label class="form-label">Maliyet (₺) — reçeteden türetilir</label>
+                        <div style="display:flex; gap:8px; align-items:stretch;">
+                            <input type="text" class="form-input" id="productCostInfo" value="—" readonly style="flex:1; background:#f8fafc; color:#475569; font-weight:700;">
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                id="productOpenRecipeBtn"
+                                onclick="window.ProductsView.openRecipeForCurrentEditing()"
+                                disabled
+                                style="white-space:nowrap; opacity:0.55; cursor:not-allowed;"
+                                title="Önce ürünü kaydet, sonra reçete düzenleyebilirsin."
+                            >🧪 Reçeteyi Düzenle</button>
+                        </div>
+                        <div style="margin-top:6px; font-size:12px; color:#64748b;">
+                            Maliyet manuel girilmez — ham madde reçetesinden otomatik hesaplanır.
+                        </div>
                     </div>
                 </div>
 
@@ -220,6 +246,82 @@ window.ProductsView = {
                         <button class="btn btn-primary" type="button" id="productsModalConfirmBtn" onclick="window.ProductsView.confirmModal()">
                             Tamam
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- =========================================
+                 RECIPE EDITOR MODAL
+                 ========================================= -->
+            <div
+                id="productsRecipeOverlay"
+                onclick="window.ProductsView.handleRecipeOverlayClick(event)"
+                style="
+                    display:none;
+                    position:fixed;
+                    inset:0;
+                    background:rgba(15, 23, 42, 0.45);
+                    z-index:9999;
+                    align-items:center;
+                    justify-content:center;
+                    padding:20px;
+                "
+            >
+                <div
+                    onclick="event.stopPropagation()"
+                    style="
+                        width:100%;
+                        max-width:720px;
+                        max-height:90vh;
+                        background:#ffffff;
+                        border-radius:20px;
+                        box-shadow:0 24px 80px rgba(15, 23, 42, 0.22);
+                        border:1px solid #e2e8f0;
+                        overflow:hidden;
+                        display:flex;
+                        flex-direction:column;
+                    "
+                >
+                    <div style="padding:22px 22px 14px 22px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+                        <div>
+                            <div style="font-size:18px; font-weight:800; color:#0f172a;">Reçete Düzenle</div>
+                            <div id="productsRecipeSubtitle" style="margin-top:6px; font-size:14px; color:#475569;"></div>
+                        </div>
+                        <button class="btn btn-secondary" type="button" onclick="window.ProductsView.closeRecipeModal()" style="padding:6px 12px;">Kapat</button>
+                    </div>
+
+                    <div id="productsRecipeError" style="margin:12px 22px 0 22px; padding:10px 12px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600; display:none;"></div>
+
+                    <div style="padding:18px 22px; overflow-y:auto; flex:1;">
+                        <div style="font-size:13px; font-weight:700; color:#334155; margin-bottom:8px;">Mevcut Reçete</div>
+                        <div id="productsRecipeList" style="border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+                            <div style="padding:16px; text-align:center; color:#64748b; font-size:13px;">Yükleniyor...</div>
+                        </div>
+
+                        <div style="margin-top:18px; padding-top:16px; border-top:1px dashed #e2e8f0;">
+                            <div style="font-size:13px; font-weight:700; color:#334155; margin-bottom:8px;">Ham Madde Ekle</div>
+                            <div style="display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; align-items:end;">
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="form-label">Ham Madde</label>
+                                    <select class="form-select" id="productsRecipeAddMaterial">
+                                        <option value="">Yükleniyor...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="form-label">Miktar</label>
+                                    <input type="number" class="form-input" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0">
+                                </div>
+                                <div>
+                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()">+ Ekle</button>
+                                </div>
+                            </div>
+                            <div id="productsRecipeAddHint" style="margin-top:6px; font-size:12px; color:#64748b;"></div>
+                        </div>
+                    </div>
+
+                    <div id="productsRecipeTotals" style="padding:14px 22px; border-top:1px solid #e2e8f0; background:#f8fafc; font-size:13px; color:#334155; display:flex; justify-content:space-between; align-items:center;">
+                        <span>Toplam Maliyet</span>
+                        <span id="productsRecipeTotalCost" style="font-weight:800; color:#0f172a;">₺0</span>
                     </div>
                 </div>
             </div>
@@ -444,6 +546,7 @@ window.ProductsView = {
                     '<td>' +
                         '<div style="display:flex; gap:6px; flex-wrap:wrap;">' +
                             '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.editProduct(\'' + window.ProductsView.escapeHtml(product.id) + '\')">📌 Düzenle</button>' +
+                            '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.openRecipeModal(\'' + window.ProductsView.escapeHtml(product.id) + '\')">🧪 Reçete</button>' +
                             '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.openToggleActiveModal(\'' + window.ProductsView.escapeHtml(product.id) + '\')">' + (isActive ? '📌 Pasif Yap' : '📌 Aktif Yap') + '</button>' +
                             '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px; color:#b91c1c;" onclick="window.ProductsView.openDeleteModal(\'' + window.ProductsView.escapeHtml(product.id) + '\')">📌 Sil</button>' +
                         '</div>' +
@@ -882,6 +985,356 @@ window.ProductsView = {
         error.style.display = 'block';
     },
 
+    /* ============================================================
+       RECIPE EDITOR
+       ============================================================ */
+
+    openRecipeModal: async function (id) {
+        var product = this.products.find(function (item) {
+            return String(item.id) === String(id);
+        });
+
+        if (!product) {
+            this.setStatus('Ürün bulunamadı.', 'error');
+            return;
+        }
+
+        this.recipeState = {
+            open: true,
+            productId: product.id,
+            productName: product.name || '',
+            recipes: [],
+            rawMaterials: [],
+            loading: true,
+            saving: false,
+            error: ''
+        };
+
+        var overlay = document.getElementById('productsRecipeOverlay');
+        var subtitle = document.getElementById('productsRecipeSubtitle');
+        if (subtitle) {
+            subtitle.textContent = this.recipeState.productName;
+        }
+        this.setRecipeError('');
+        this.renderRecipeList();
+        this.renderRawMaterialSelect();
+
+        if (overlay) overlay.style.display = 'flex';
+
+        try {
+            await this.loadRecipesAndMaterials();
+        } catch (error) {
+            this.setRecipeError(this.getErrorMessage(error, 'Reçete yüklenemedi.'));
+        }
+    },
+
+    closeRecipeModal: function () {
+        this.recipeState = {
+            open: false,
+            productId: null,
+            productName: '',
+            recipes: [],
+            rawMaterials: [],
+            loading: false,
+            saving: false,
+            error: ''
+        };
+
+        var overlay = document.getElementById('productsRecipeOverlay');
+        if (overlay) overlay.style.display = 'none';
+
+        var qty = document.getElementById('productsRecipeAddQty');
+        if (qty) qty.value = '';
+    },
+
+    handleRecipeOverlayClick: function (event) {
+        var overlay = document.getElementById('productsRecipeOverlay');
+        if (event.target === overlay) {
+            this.closeRecipeModal();
+        }
+    },
+
+    loadRecipesAndMaterials: async function () {
+        var productId = this.recipeState.productId;
+        if (!productId) return;
+
+        this.recipeState.loading = true;
+
+        var results = await Promise.all([
+            window.SupabaseService.query('product_recipes', {
+                filters: [
+                    { op: 'eq', column: 'is_deleted', value: false },
+                    { op: 'eq', column: 'product_id', value: productId }
+                ],
+                select: 'id,product_id,raw_material_id,quantity,raw_material:raw_materials(id,name,unit,cost,is_deleted)',
+                order: { column: 'created_at', asc: true }
+            }),
+            window.SupabaseService.query('raw_materials', {
+                filters: [
+                    { op: 'eq', column: 'is_deleted', value: false },
+                    { op: 'eq', column: 'is_active', value: true }
+                ],
+                select: 'id,name,unit,cost',
+                order: { column: 'name', asc: true }
+            })
+        ]);
+
+        if (!this._isActive || !this.recipeState.open) return;
+
+        var recipeResult = results[0];
+        var materialResult = results[1];
+
+        if (recipeResult.error) {
+            throw recipeResult.error;
+        }
+        if (materialResult.error) {
+            throw materialResult.error;
+        }
+
+        var recipes = Array.isArray(recipeResult.data) ? recipeResult.data : [];
+        // Embed'de soft-delete edilmiş raw_material kayıtları gelirse filtrele.
+        recipes = recipes.filter(function (r) {
+            return !r.raw_material || r.raw_material.is_deleted !== true;
+        });
+
+        this.recipeState.recipes = recipes;
+        this.recipeState.rawMaterials = Array.isArray(materialResult.data) ? materialResult.data : [];
+        this.recipeState.loading = false;
+
+        this.renderRecipeList();
+        this.renderRawMaterialSelect();
+    },
+
+    renderRecipeList: function () {
+        var list = document.getElementById('productsRecipeList');
+        var totalEl = document.getElementById('productsRecipeTotalCost');
+        if (!list) return;
+
+        if (this.recipeState.loading) {
+            list.innerHTML = '<div style="padding:16px; text-align:center; color:#64748b; font-size:13px;">Yükleniyor...</div>';
+            if (totalEl) totalEl.textContent = this.formatMoney(0);
+            return;
+        }
+
+        var recipes = this.recipeState.recipes || [];
+
+        if (recipes.length === 0) {
+            list.innerHTML = '<div style="padding:20px; text-align:center; color:#64748b; font-size:13px;">Bu ürün için henüz reçete satırı yok.</div>';
+            if (totalEl) totalEl.textContent = this.formatMoney(0);
+            return;
+        }
+
+        var total = 0;
+        var self = this;
+
+        var html = '<table class="data-table" style="margin:0;"><thead><tr>' +
+            '<th>Ham Madde</th>' +
+            '<th style="text-align:right;">Miktar</th>' +
+            '<th style="text-align:right;">Birim Maliyet</th>' +
+            '<th style="text-align:right;">Satır Maliyeti</th>' +
+            '<th style="width:100px;">İşlem</th>' +
+            '</tr></thead><tbody>';
+
+        html += recipes.map(function (r) {
+            var mat = r.raw_material || {};
+            var quantity = Number(r.quantity) || 0;
+            var unitCost = Number(mat.cost) || 0;
+            var lineCost = quantity * unitCost;
+            total += lineCost;
+
+            var name = self.escapeHtml(mat.name || '(Silinmiş ham madde)');
+            var unit = self.escapeHtml(mat.unit || '');
+            var qtyText = self.formatQuantity(quantity) + (unit ? ' ' + unit : '');
+
+            return '<tr>' +
+                '<td>' + name + '</td>' +
+                '<td style="text-align:right;">' + qtyText + '</td>' +
+                '<td style="text-align:right;">' + self.formatMoney(unitCost) + '</td>' +
+                '<td style="text-align:right; font-weight:700;">' + self.formatMoney(lineCost) + '</td>' +
+                '<td>' +
+                    '<button class="btn btn-secondary" style="padding:4px 8px; font-size:12px; color:#b91c1c;" onclick="window.ProductsView.removeRecipeLine(\'' + self.escapeHtml(r.id) + '\')">Kaldır</button>' +
+                '</td>' +
+                '</tr>';
+        }).join('');
+
+        html += '</tbody></table>';
+
+        list.innerHTML = html;
+        if (totalEl) totalEl.textContent = this.formatMoney(total);
+    },
+
+    renderRawMaterialSelect: function () {
+        var select = document.getElementById('productsRecipeAddMaterial');
+        var hint = document.getElementById('productsRecipeAddHint');
+        if (!select) return;
+
+        var materials = this.recipeState.rawMaterials || [];
+
+        if (this.recipeState.loading) {
+            select.innerHTML = '<option value="">Yükleniyor...</option>';
+            if (hint) hint.textContent = '';
+            return;
+        }
+
+        if (materials.length === 0) {
+            select.innerHTML = '<option value="">Ham madde kaydı yok</option>';
+            if (hint) hint.textContent = 'Önce "Ham Maddeler" ekranından ham madde oluşturmalısın.';
+            return;
+        }
+
+        // Zaten reçetede olan ham maddeleri dropdown\'dan çıkar (unique constraint korunsun).
+        var usedIds = {};
+        (this.recipeState.recipes || []).forEach(function (r) {
+            if (r.raw_material_id) usedIds[String(r.raw_material_id)] = true;
+        });
+
+        var self = this;
+        var options = '<option value="">Seçiniz</option>';
+        var availableCount = 0;
+
+        materials.forEach(function (m) {
+            if (usedIds[String(m.id)]) return;
+            availableCount++;
+            var label = self.escapeHtml(m.name) +
+                ' (' + self.escapeHtml(m.unit || '') + ' · ' + self.formatMoney(m.cost) + ')';
+            options += '<option value="' + self.escapeHtml(m.id) + '">' + label + '</option>';
+        });
+
+        select.innerHTML = options;
+
+        if (hint) {
+            hint.textContent = availableCount === 0
+                ? 'Tüm aktif ham maddeler zaten bu reçetede.'
+                : '';
+        }
+    },
+
+    addRecipeLine: async function () {
+        if (this.recipeState.saving) return;
+
+        var productId = this.recipeState.productId;
+        var selectEl = document.getElementById('productsRecipeAddMaterial');
+        var qtyEl = document.getElementById('productsRecipeAddQty');
+        var btn = document.getElementById('productsRecipeAddBtn');
+
+        if (!productId || !selectEl || !qtyEl) return;
+
+        var rawMaterialId = selectEl.value;
+        var quantity = Number(qtyEl.value);
+
+        if (!rawMaterialId) {
+            this.setRecipeError('Ham madde seçmelisin.');
+            return;
+        }
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+            this.setRecipeError('Miktar 0\'dan büyük olmalı.');
+            return;
+        }
+
+        // İstemci tarafı duplicate guard — unique index ayrıca DB\'de de koruyor.
+        var duplicate = (this.recipeState.recipes || []).some(function (r) {
+            return String(r.raw_material_id) === String(rawMaterialId);
+        });
+        if (duplicate) {
+            this.setRecipeError('Bu ham madde zaten reçetede.');
+            return;
+        }
+
+        this.setRecipeError('');
+        this.recipeState.saving = true;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Ekleniyor...';
+        }
+
+        try {
+            var payload = {
+                product_id: productId,
+                raw_material_id: rawMaterialId,
+                quantity: quantity
+            };
+
+            var result = await window.SupabaseService.insert('product_recipes', payload);
+            if (!this._isActive || !this.recipeState.open) return;
+
+            if (result.error) {
+                this.setRecipeError(this.getErrorMessage(result.error, 'Reçete satırı eklenemedi.'));
+                return;
+            }
+
+            qtyEl.value = '';
+            selectEl.value = '';
+
+            await this.loadRecipesAndMaterials();
+            if (!this._isActive || !this.recipeState.open) return;
+
+            // Ürün listesindeki cost güncellenmiş olabilir (trigger) — tabloyu yenile.
+            await this.loadProducts();
+        } catch (error) {
+            this.setRecipeError(this.getErrorMessage(error, 'Reçete satırı eklenemedi.'));
+        } finally {
+            this.recipeState.saving = false;
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '+ Ekle';
+            }
+        }
+    },
+
+    removeRecipeLine: async function (recipeId) {
+        if (!recipeId || this.recipeState.saving) return;
+
+        this.setRecipeError('');
+        this.recipeState.saving = true;
+
+        try {
+            var result = await window.SupabaseService.update('product_recipes', recipeId, {
+                is_deleted: true
+            });
+            if (!this._isActive || !this.recipeState.open) return;
+
+            if (result.error) {
+                this.setRecipeError(this.getErrorMessage(result.error, 'Reçete satırı kaldırılamadı.'));
+                return;
+            }
+
+            await this.loadRecipesAndMaterials();
+            if (!this._isActive || !this.recipeState.open) return;
+
+            await this.loadProducts();
+        } catch (error) {
+            this.setRecipeError(this.getErrorMessage(error, 'Reçete satırı kaldırılamadı.'));
+        } finally {
+            this.recipeState.saving = false;
+        }
+    },
+
+    setRecipeError: function (message) {
+        var el = document.getElementById('productsRecipeError');
+        if (!el) return;
+
+        if (!message) {
+            el.textContent = '';
+            el.style.display = 'none';
+            return;
+        }
+
+        el.textContent = message;
+        el.style.display = 'block';
+    },
+
+    formatQuantity: function (value) {
+        var number = Number(value) || 0;
+        return number.toLocaleString('tr-TR', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 4
+        });
+    },
+
+    /* ============================================================
+       PRODUCT FORM
+       ============================================================ */
+
     editProduct: function (id) {
         var product = this.products.find(function (item) {
             return String(item.id) === String(id);
@@ -903,10 +1356,36 @@ window.ProductsView = {
         if (name) name.value = product.name || '';
         if (category) category.value = product.category_id || '';
         if (price) price.value = Number(product.price) || 0;
-        if (costInfo) costInfo.value = 'Mevcut maliyet: ' + this.formatMoney(product.cost);
+        if (costInfo) costInfo.value = this.formatMoney(product.cost);
+
+        this.setRecipeButtonEnabled(true);
 
         this.toggleForm(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+
+    openRecipeForCurrentEditing: function () {
+        if (!this.editingId) {
+            this.setStatus('Önce ürünü kaydet, sonra reçete düzenleyebilirsin.', 'error');
+            return;
+        }
+        this.openRecipeModal(this.editingId);
+    },
+
+    setRecipeButtonEnabled: function (enabled) {
+        var btn = document.getElementById('productOpenRecipeBtn');
+        if (!btn) return;
+        if (enabled) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+            btn.title = 'Bu ürünün reçetesini düzenle.';
+        } else {
+            btn.disabled = true;
+            btn.style.opacity = '0.55';
+            btn.style.cursor = 'not-allowed';
+            btn.title = 'Önce ürünü kaydet, sonra reçete düzenleyebilirsin.';
+        }
     },
 
     save: async function () {
@@ -991,7 +1470,9 @@ window.ProductsView = {
         if (name) name.value = '';
         if (category) category.value = '';
         if (price) price.value = '';
-        if (costInfo) costInfo.value = 'Fatura / satın alma verisinden gelir';
+        if (costInfo) costInfo.value = '—';
+
+        this.setRecipeButtonEnabled(false);
     },
 
     getCategoryLabel: function (categoryId, product) {
@@ -1117,6 +1598,7 @@ window.ProductsView = {
         this.categories = [];
         this.performanceMap = new Map();
         this.editingId = null;
+        this.closeRecipeModal();
     },
 
     initPurchase: function () {

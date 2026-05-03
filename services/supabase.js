@@ -13,6 +13,37 @@
    göndermez veya filtrelemez.
    ============================================================ */
 
+/* ============================================================
+   FETCH INTERCEPTOR — sadece purchase_items için raw body log
+   Kapatmak için: window.__PURCHASE_FETCH_TRACE = false
+   ============================================================ */
+(function () {
+    if (window.__purchaseFetchTraceInstalled) return;
+    window.__purchaseFetchTraceInstalled = true;
+    // Default OFF — açmak için console: window.__PURCHASE_FETCH_TRACE = true
+    if (typeof window.__PURCHASE_FETCH_TRACE === 'undefined') {
+        window.__PURCHASE_FETCH_TRACE = false;
+    }
+    var origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+        try {
+            if (window.__PURCHASE_FETCH_TRACE) {
+                var url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (url.indexOf('/rest/v1/purchase_items') !== -1) {
+                    var method = (init && init.method) || (input && input.method) || 'GET';
+                    var body = init && init.body ? init.body : null;
+                    if(window.__DEBUG__)console.log('[FETCH→supabase] ' + method + ' ' + url);
+                    if (body) {
+                        if(window.__DEBUG__)console.log('[FETCH→supabase] RAW BODY:', body);
+                        try { if(window.__DEBUG__)console.log('[FETCH→supabase] PARSED:', JSON.parse(body)); } catch (e) {}
+                    }
+                }
+            }
+        } catch (e) {}
+        return origFetch(input, init);
+    };
+})();
+
 window.SupabaseService = (function () {
     'use strict';
 
@@ -48,6 +79,9 @@ window.SupabaseService = (function () {
 
         client = supabase.createClient(url, key);
 
+        // Global expose — window.supabase ile direkt erisim (debug/legacy uyumluluk)
+        try { window.supabase = client; } catch (e) { /* noop */ }
+
         // Auth state değiştiğinde tenant cache'i invalidate et
         client.auth.onAuthStateChange(function (event) {
             if (window.ViewCache && typeof window.ViewCache.clear === 'function') {
@@ -73,7 +107,7 @@ window.SupabaseService = (function () {
             }
         });
 
-        console.log('✅ Supabase initialized');
+        if(window.__DEBUG__)console.log('✅ Supabase initialized');
     }
 
     function getClient() {
@@ -374,13 +408,18 @@ window.SupabaseService = (function () {
     async function insert(table, record) {
         if (!client) return { data: null, error: 'Supabase not initialized' };
 
-        const payload = { ...record };
-
-        return await client
+        // Payload'ı OLDUĞU GİBİ gönder — hiçbir field filtrelenmesin
+        const res = await client
             .from(table)
-            .insert(payload)
-            .select()
-            .single();
+            .insert(record)
+            .select();
+
+        if (res && res.error) {
+            return { data: null, error: res.error };
+        }
+        // Tek satır insert — geriye uyumluluk için ilk eleman
+        const data = Array.isArray(res && res.data) ? (res.data[0] || null) : (res && res.data) || null;
+        return { data: data, error: null };
     }
 
     /* ============================================================

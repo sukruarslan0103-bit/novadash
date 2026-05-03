@@ -17,3 +17,11 @@ window.APP_CONFIG = {
      */
     ENV: 'development'
 };
+
+/* ============================================================
+   DEBUG FLAG
+   - Production: false (default) → console.log sessiz
+   - Geçici aç: window.__DEBUG__ = true; (DevTools console)
+   - console.error ve console.warn etkilenmez
+   ============================================================ */
+window.__DEBUG__ = false;

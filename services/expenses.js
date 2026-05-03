@@ -1,5 +1,6 @@
 /* ============================================================
    EXPENSES SERVICE — CRUD Operations
+   WRITE PATH → RPC-ONLY (update_expense, soft_delete_expense)
    Client-side tenant kullanimi YOK.
    tenant_id backend'de (SupabaseService + RPC + RLS) resolve edilir.
    ============================================================ */
@@ -199,35 +200,49 @@ window.ExpensesService = (function () {
     }
 
     async function update(id, updates) {
-        const payload = {};
+        if (!id) throw new Error('Gider ID gerekli');
 
-        if (updates.date !== undefined) payload.date = updates.date;
-        if (updates.amount !== undefined) payload.amount = Number(updates.amount || 0);
-        if (updates.description !== undefined) payload.description = updates.description || '';
-        if (updates.category_id !== undefined) payload.category_id = updates.category_id || null;
-        if (updates.category_name !== undefined) payload.category_name = updates.category_name || null;
+        const client = window.SupabaseService.getClient();
+        if (!client) throw new Error('Supabase client yok');
+
+        const p_updates = {};
+        if (updates.date !== undefined) p_updates.date = updates.date;
+        if (updates.amount !== undefined) p_updates.amount = Number(updates.amount || 0);
+        if (updates.description !== undefined) p_updates.description = updates.description || '';
+        if (updates.category_id !== undefined) p_updates.category_id = updates.category_id || null;
+        if (updates.category_name !== undefined) p_updates.category_name = updates.category_name || null;
 
         clearCache();
 
-        const res = await window.SupabaseService.update('expenses', id, payload);
+        const { data, error } = await client.rpc('update_expense', {
+            p_id: id,
+            p_updates: p_updates
+        });
 
-        if (res.error) {
-            throw new Error(res.error.message || 'Gider kaydı güncellenemedi');
+        if (error) {
+            throw new Error(error.message || 'Gider kaydı güncellenemedi');
         }
 
-        return res;
+        return { data: data?.data || null, error: null };
     }
 
     async function remove(id) {
+        if (!id) throw new Error('Gider ID gerekli');
+
+        const client = window.SupabaseService.getClient();
+        if (!client) throw new Error('Supabase client yok');
+
         clearCache();
 
-        const res = await window.SupabaseService.softDelete('expenses', id);
+        const { data, error } = await client.rpc('soft_delete_expense', {
+            p_id: id
+        });
 
-        if (res.error) {
-            throw new Error(res.error.message || 'Gider kaydı silinemedi');
+        if (error) {
+            throw new Error(error.message || 'Gider kaydı silinemedi');
         }
 
-        return res;
+        return { data: data, error: null };
     }
 
     async function getMonthlySummary(page, pageSize) {

@@ -335,11 +335,11 @@ window.SalesView = {
             this.totalCount = result.count || this.salesData.length;
             this.totalPages = result.totalPages || 1;
 
-            // await this.loadProductSalesForPage();
+            // Cost/profit artık RPC (get_sales_paginated) tarafından satır başına dönüyor.
+            // Eski product_sales fetch + _costMap rebuild'e ihtiyaç yok — getDailyRows direkt sale.cost / sale.profit okuyor.
+            // Geriye uyumluluk için _costMap boş kalır; getCostBySaleId fallback'i 0 döner ama RPC değerleri kullanılır.
 
             if (!this._isActive) return;
-
-            this._rebuildCostMap();
 
             if (this.viewMode === 'daily') {
                 await this.loadKpiTotals();
@@ -474,8 +474,9 @@ window.SalesView = {
 
         return sorted.map(sale => {
             const total = Number(sale.total) || 0;
-            const cost = this.getCostBySaleId(sale.id);
-            const profit = total - cost;
+            // Cost: önce row üstünde geliyorsa onu kullan, yoksa _costMap (product_sales agregatı)
+            const cost = (sale.cost != null) ? Number(sale.cost) : this.getCostBySaleId(sale.id);
+            const profit = (sale.profit != null) ? Number(sale.profit) : (total - cost);
             const margin = total > 0 ? (profit / total) * 100 : 0;
 
             return {
@@ -503,7 +504,8 @@ window.SalesView = {
             }
 
             monthMap[monthKey].total += Number(sale.total) || 0;
-            monthMap[monthKey].cost += this.getCostBySaleId(sale.id);
+            // RPC cost varsa direkt kullan, yoksa eski yola düş
+            monthMap[monthKey].cost += (sale.cost != null) ? (Number(sale.cost) || 0) : this.getCostBySaleId(sale.id);
         }
 
         const months = Object.keys(monthMap).sort().reverse();

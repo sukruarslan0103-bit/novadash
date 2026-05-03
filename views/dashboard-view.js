@@ -1,7 +1,8 @@
 /* ============================================================
    DASHBOARD VIEW — Full featured
    AnalyticsService üzerinden veri alır.
-   KPI toggle, alerts, analysis, health score, top products dahil.
+   KPI toggle, alerts list, analysis, health score, top products dahil.
+   (Decision card / alerts_master sistemi Sağlık Raporu sayfasına taşındı.)
    ============================================================ */
 
 window.DashboardView = {
@@ -292,12 +293,19 @@ window.DashboardView = {
     },
 
     renderSalesChart(data) {
-        window.destroyChart('salesChart');
-
         var ctx = document.getElementById('salesChart');
         if (!ctx) return;
 
         var weekly = data.weeklySales || [];
+
+        // Same-data guard: aynı dataset → recreate ETME
+        var sig = JSON.stringify(weekly.map(function (s) { return [s.day, s.amount]; }));
+        if (window.STATE.charts.salesChart && this._lastSalesSig === sig) {
+            return;
+        }
+        this._lastSalesSig = sig;
+
+        window.destroyChart('salesChart');
 
         window.STATE.charts.salesChart = new Chart(ctx, {
             type: 'bar',
@@ -330,8 +338,6 @@ window.DashboardView = {
     },
 
     renderExpenseChart(data) {
-        window.destroyChart('expenseChart');
-
         var ctx = document.getElementById('expenseChart');
         if (!ctx) return;
 
@@ -339,8 +345,18 @@ window.DashboardView = {
 
         if (cats.length === 0) {
             ctx.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:200px;color:#94a3b8;font-size:14px;">Gider verisi bulunamadı</div>';
+            this._lastExpenseSig = null;
             return;
         }
+
+        // Same-data guard
+        var sig = JSON.stringify(cats.map(function (c) { return [c.name, c.amount, c.color]; }));
+        if (window.STATE.charts.expenseChart && this._lastExpenseSig === sig) {
+            return;
+        }
+        this._lastExpenseSig = sig;
+
+        window.destroyChart('expenseChart');
 
         window.STATE.charts.expenseChart = new Chart(ctx, {
             type: 'doughnut',

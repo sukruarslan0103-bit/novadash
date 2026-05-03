@@ -33,6 +33,41 @@ window.ExpensesView = {
         this._isActive = true;
         this.container = container;
 
+        // === CACHE INVALIDATION HANDLER (sadece bir kez bağlanır) ===
+        if (!this._cacheEventsBound) {
+            this._cacheEventsBound = true;
+            var self = this;
+            window.addEventListener('expenses:updated', function () {
+                if (window.ViewCache) {
+                    window.ViewCache.invalidate('expenses-view:');
+                }
+            });
+        }
+
+        // === CACHE READ ===
+        var tid = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+        var cacheKey = 'expenses-view:' + tid +
+                       ':' + (this.filters.mode || 'daily') +
+                       ':' + (this.filters.startDate || '') +
+                       ':' + (this.filters.endDate || '') +
+                       ':' + (this.pagination.page || 1);
+        if (window.ViewCache) {
+            var cached = window.ViewCache.get(cacheKey);
+            if (cached) {
+                this.categories = cached.categories || [];
+                this.expenses = cached.expenses || [];
+                this.groupedMonthlyExpenses = cached.groupedMonthlyExpenses || [];
+                this.pagination = Object.assign({}, this.pagination, cached.pagination || {});
+                try {
+                    this.renderPage();
+                    this.bindEvents();
+                } catch (e) { /* render hatası varsa cache'i bypass eder */ }
+                if (this.expenses.length || this.groupedMonthlyExpenses.length || this.categories.length) {
+                    return;
+                }
+            }
+        }
+
         container.innerHTML =
             '<div class="card">' +
                 '<div class="card-header">' +
@@ -51,6 +86,16 @@ window.ExpensesView = {
             if (!this._isActive) return;
             this.renderPage();
             this.bindEvents();
+
+            // === CACHE WRITE ===
+            if (window.ViewCache) {
+                window.ViewCache.set(cacheKey, {
+                    categories: this.categories,
+                    expenses: this.expenses,
+                    groupedMonthlyExpenses: this.groupedMonthlyExpenses,
+                    pagination: Object.assign({}, this.pagination)
+                }, 60 * 1000); // 60s TTL
+            }
         } catch (error) {
             console.error('ExpensesView render error:', error);
 
@@ -1336,7 +1381,7 @@ window.ExpensesView = {
             var selectedCategory = (this.categories || []).find(function (c) { return c.id === categoryId; });
             var categoryName = selectedCategory ? selectedCategory.name : null;
 
-            await window.ExpensesService.create({
+            var saveResult = await window.ExpensesService.create({
                 date: date,
                 amount: amount,
                 category_id: categoryId,
@@ -1345,6 +1390,12 @@ window.ExpensesView = {
             });
 
             if (!this._isActive) return;
+
+            // RPC duplicate dondurduyse kullaniciyi uyar, formu KAPATMA
+            if (saveResult && saveResult.duplicate) {
+                this.showToast(saveResult.message || 'Aynı gider zaten kayıtlı. Yeni kayıt eklenmedi.', 'error');
+                return;
+            }
 
             this.resetExpenseForm();
             this.closeExpenseModal();

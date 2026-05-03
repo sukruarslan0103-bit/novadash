@@ -40,24 +40,104 @@ window.ProductsView = {
         open: false,
         productId: null,
         productName: '',
-        recipes: [],        // [{id, raw_material_id, quantity, raw_material:{name,unit,cost}}]
-        rawMaterials: [],   // [{id, name, unit, cost}]
+
+        // Original snapshot (DB'den gelen, immutable). Dirty check icin.
+        originalRecipes: [], // [{id, raw_material_id, quantity, raw_material:{...}}]
+
+        // Draft (kullanici duzenler, sadece Kaydet'te DB'ye yazilir)
+        // [{tempId, recipeId, raw_material_id, quantity, raw_material:{name,unit,cost}, _state:'unchanged'|'new'|'modified'|'removed'}]
+        draftRecipes: [],
+
+        rawMaterials: [],
         loading: false,
         saving: false,
         error: ''
     },
+    _recipeTempCounter: 0,
+
+    _activeTab: 'products',
+    _tabsRendered: { 'raw-materials': false, 'purchase': false },
+
+    // Raw materials tab state
+    rmState: {
+        materials: [],
+        editingId: null,
+        search: '',
+        page: 1,
+        pageSize: 30,
+        UNITS: ['gr', 'kg', 'ml', 'lt', 'cl', 'adet', 'paket'],
+        // history panel
+        historyOpen: false,
+        historyMaterial: null,      // {id, name, unit, cost}
+        historyRows: [],
+        historyFilter: {
+            startDate: '',
+            endDate: '',
+            sortBy: 'date-desc'
+        }
+    },
+
+    // Purchase tab state (invoice / multi-line)
+    purchaseState: {
+        rawMaterials: [],
+        purchases: [],          // recent (filtered+paged görünen)
+        purchasesAll: [],       // recent (server'dan çekilen tam liste, filtre öncesi)
+        lines: [],              // draft invoice lines: [{_k, rmId, qty, unitCost, discount, vat, total, lastEdited}]
+        saving: false,
+        vatIncluded: false,     // global toggle: fiyatlar KDV dahil mi?
+        searchById: {},
+        recipeOpen: false,
+        supplierName: '',       // fatura tedarikçi (UI only)
+        description: '',        // fatura açıklama (UI only)
+        // Genel iskonto (fatura geneli, KDV oncesi uygulanir)
+        generalDiscount: {
+            type: 'amount',     // 'amount' (TL) | 'percent' (%)
+            value: 0
+        },
+        editingItemId: null,    // (legacy) tek satır düzenleme — artık kullanılmıyor
+        editingInvoiceId: null, // düzenleme modu (fatura)
+        editingOriginalIds: [], // düzenlenen faturadaki orijinal item id'leri (UPDATE/DELETE için)
+        recentFilter: {
+            startDate: '',
+            endDate: '',
+            page: 1,
+            pageSize: 20
+        }
+    },
+
+    _puDebounceTimer: null,     // input debounce handle
+
+    _puLineKey: 1,
 
     async render(container) {
         this._isActive = true;
+        this._activeTab = 'products';
+        this._tabsRendered = { 'raw-materials': false, 'purchase': false };
 
         container.innerHTML = `
+            <div class="products-tabs" style="display:flex; gap:6px; padding:6px; background:#f1f5f9; border-radius:14px; margin-bottom:16px; width:fit-content;">
+                <button type="button" data-ptab="products" onclick="window.ProductsView.switchTab('products')"
+                    style="padding:10px 20px; border:none; border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; background:#0f172a; color:#fff; transition:all .15s;">
+                    ÜRÜNLER
+                </button>
+                <button type="button" data-ptab="raw-materials" onclick="window.ProductsView.switchTab('raw-materials')"
+                    style="padding:10px 20px; border:none; border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; background:transparent; color:#475569; transition:all .15s;">
+                    HAMMADDELER
+                </button>
+                <button type="button" data-ptab="purchase" onclick="window.ProductsView.switchTab('purchase')"
+                    style="padding:10px 20px; border:none; border-radius:10px; font-size:14px; font-weight:700; cursor:pointer; background:transparent; color:#475569; transition:all .15s;">
+                    ALIŞ
+                </button>
+            </div>
+
+            <div id="productsPaneRawMaterials" style="display:none;"></div>
+            <div id="productsPanePurchase" style="display:none;"></div>
+
+            <div id="productsPaneProducts">
             <div class="page-header">
                 <h2 class="page-title">Ürünler</h2>
                 <button class="btn btn-primary" onclick="window.ProductsView.toggleForm()">
                     + Yeni Ürün Ekle
-                </button>
-				<button class="btn btn-secondary" id="openPurchaseModal">
-                    + Alış Gir
                 </button>
             </div>
 
@@ -251,7 +331,8 @@ window.ProductsView = {
             </div>
 
             <!-- =========================================
-                 RECIPE EDITOR MODAL
+                 RECIPE EDITOR MODAL — PREMIUM (DRAFT-BASED)
+                 Sticky header (toplam) + sticky footer (Iptal/Kaydet)
                  ========================================= -->
             <div
                 id="productsRecipeOverlay"
@@ -260,78 +341,160 @@ window.ProductsView = {
                     display:none;
                     position:fixed;
                     inset:0;
-                    background:rgba(15, 23, 42, 0.45);
+                    background:rgba(15,23,42,0.45);
+                    backdrop-filter:blur(4px);
+                    -webkit-backdrop-filter:blur(4px);
                     z-index:9999;
                     align-items:center;
                     justify-content:center;
-                    padding:20px;
+                    padding:24px;
                 "
             >
                 <div
                     onclick="event.stopPropagation()"
                     style="
                         width:100%;
-                        max-width:720px;
-                        max-height:90vh;
+                        max-width:880px;
+                        height:auto;
+                        max-height:calc(100vh - 48px);
                         background:#ffffff;
                         border-radius:20px;
-                        box-shadow:0 24px 80px rgba(15, 23, 42, 0.22);
+                        box-shadow:0 30px 80px rgba(15,23,42,0.30), 0 10px 30px rgba(15,23,42,0.12);
                         border:1px solid #e2e8f0;
                         overflow:hidden;
                         display:flex;
                         flex-direction:column;
                     "
                 >
-                    <div style="padding:22px 22px 14px 22px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
-                        <div>
-                            <div style="font-size:18px; font-weight:800; color:#0f172a;">Reçete Düzenle</div>
-                            <div id="productsRecipeSubtitle" style="margin-top:6px; font-size:14px; color:#475569;"></div>
+                    <!-- HEADER: ürün adı + kapat -->
+                    <div style="padding:22px 26px 18px 26px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px; background:#ffffff;">
+                        <div style="min-width:0; flex:1;">
+                            <div style="font-size:11px; font-weight:700; color:#94a3b8; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:6px;">Reçete Düzenle</div>
+                            <div id="productsRecipeSubtitle" style="font-size:20px; font-weight:800; color:#0f172a; letter-spacing:-0.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
                         </div>
-                        <button class="btn btn-secondary" type="button" onclick="window.ProductsView.closeRecipeModal()" style="padding:6px 12px;">Kapat</button>
+                        <button class="btn btn-secondary" type="button" onclick="window.ProductsView.cancelRecipe()" title="Kapat" style="padding:8px 12px; font-size:13px; flex-shrink:0;">✕</button>
                     </div>
 
-                    <div id="productsRecipeError" style="margin:12px 22px 0 22px; padding:10px 12px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600; display:none;"></div>
+                    <!-- STICKY TOTAL CARD -->
+                    <div style="padding:18px 26px; border-bottom:1px solid #e2e8f0; background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                            <div>
+                                <div style="font-size:11px; font-weight:700; color:#15803d; letter-spacing:0.08em; text-transform:uppercase;">Toplam Maliyet</div>
+                                <div id="productsRecipeTotalCost" style="margin-top:4px; font-size:28px; font-weight:800; color:#15803d; letter-spacing:-0.02em;">₺0</div>
+                            </div>
+                            <div id="productsRecipeDirtyBadge" style="display:none; padding:6px 12px; border-radius:999px; background:#fef3c7; border:1px solid #fbbf24; color:#92400e; font-size:11px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">● Kaydedilmemiş</div>
+                        </div>
+                    </div>
 
-                    <div style="padding:18px 22px; overflow-y:auto; flex:1;">
-                        <div style="font-size:13px; font-weight:700; color:#334155; margin-bottom:8px;">Mevcut Reçete</div>
-                        <div id="productsRecipeList" style="border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
-                            <div style="padding:16px; text-align:center; color:#64748b; font-size:13px;">Yükleniyor...</div>
+                    <!-- ERROR -->
+                    <div id="productsRecipeError" style="margin:12px 26px 0 26px; padding:10px 14px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600; display:none;"></div>
+
+                    <!-- BODY (scrollable) -->
+                    <div style="padding:18px 26px 8px 26px; overflow-y:auto; flex:1;">
+                        <!-- LIST -->
+                        <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:10px;">Hammaddeler</div>
+                        <div id="productsRecipeList" style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="padding:20px; text-align:center; color:#94a3b8; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px;">Yükleniyor...</div>
                         </div>
 
-                        <div style="margin-top:18px; padding-top:16px; border-top:1px dashed #e2e8f0;">
-                            <div style="font-size:13px; font-weight:700; color:#334155; margin-bottom:8px;">Ham Madde Ekle</div>
+                        <!-- ADD ROW -->
+                        <div style="margin-top:22px; padding:16px; border:1.5px solid #e2e8f0; border-radius:14px; background:#f8fafc;">
+                            <div style="font-size:11px; font-weight:700; color:#334155; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:12px;">+ Hammadde Ekle</div>
                             <div style="display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; align-items:end;">
-                                <div class="form-group" style="margin-bottom:0;">
-                                    <label class="form-label">Ham Madde</label>
-                                    <select class="form-select" id="productsRecipeAddMaterial">
-                                        <option value="">Yükleniyor...</option>
-                                    </select>
+                                <div class="form-group" style="margin-bottom:0; position:relative;">
+                                    <label class="form-label" style="font-size:12px; color:#475569;">Hammadde</label>
+                                    <input type="text" class="form-input" id="productsRecipeSearch" placeholder="HM - yazmaya başla..." autocomplete="off"
+                                        oninput="window.ProductsView.recipeHandleSearch(this.value)"
+                                        onfocus="window.ProductsView.recipeShowDropdown(true)"
+                                        onkeydown="window.ProductsView.recipeSearchKey(event)">
+                                    <input type="hidden" id="productsRecipeAddMaterial" value="">
+                                    <div id="productsRecipeDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:12px; box-shadow:0 14px 40px rgba(15,23,42,0.18); max-height:340px; overflow-y:auto; z-index:40; margin-top:6px;"></div>
                                 </div>
                                 <div class="form-group" style="margin-bottom:0;">
-                                    <label class="form-label">Miktar</label>
-                                    <input type="number" class="form-input" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0">
+                                    <label class="form-label" style="font-size:12px; color:#475569;">Miktar</label>
+                                    <input type="number" class="form-input" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0"
+                                        onkeydown="if(event.key==='Enter'){window.ProductsView.addRecipeLine();}">
                                 </div>
                                 <div>
-                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()">+ Ekle</button>
+                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()" style="padding:11px 18px;">+ Ekle</button>
                                 </div>
                             </div>
-                            <div id="productsRecipeAddHint" style="margin-top:6px; font-size:12px; color:#64748b;"></div>
+                            <div id="productsRecipeAddHint" style="margin-top:8px; font-size:12px; color:#64748b;"></div>
                         </div>
                     </div>
 
-                    <div id="productsRecipeTotals" style="padding:14px 22px; border-top:1px solid #e2e8f0; background:#f8fafc; font-size:13px; color:#334155; display:flex; justify-content:space-between; align-items:center;">
-                        <span>Toplam Maliyet</span>
-                        <span id="productsRecipeTotalCost" style="font-weight:800; color:#0f172a;">₺0</span>
+                    <!-- STICKY FOOTER: Iptal / Kaydet -->
+                    <div style="padding:16px 26px; border-top:1px solid #e2e8f0; background:#ffffff; display:flex; justify-content:flex-end; gap:10px;">
+                        <button class="btn btn-secondary" type="button" id="productsRecipeCancelBtn" onclick="window.ProductsView.cancelRecipe()" style="padding:11px 22px; font-weight:600;">İptal</button>
+                        <button class="btn btn-primary" type="button" id="productsRecipeSaveBtn" onclick="window.ProductsView.saveRecipe()" style="padding:11px 28px; font-weight:700; min-width:120px;">Kaydet</button>
                     </div>
                 </div>
             </div>
+            </div><!-- /productsPaneProducts -->
         `;
 
-        await this.loadCategories();
-        if (!this._isActive) return;
-        await this.loadProducts();
-        if (!this._isActive) return;
-        this.initPurchase();
+        // === CACHE INVALIDATION HANDLER (sadece bir kez bağlanır) ===
+        if (!this._cacheEventsBound) {
+            this._cacheEventsBound = true;
+            window.addEventListener('products:updated', function () {
+                if (window.ViewCache) {
+                    window.ViewCache.invalidate('products-view:');
+                }
+            });
+        }
+
+        // === CACHE READ ===
+        var tid = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+        var cacheKey = 'products-view:' + tid;
+        var cacheUsed = false;
+        if (window.ViewCache) {
+            var cached = window.ViewCache.get(cacheKey);
+            if (cached && Array.isArray(cached.products)) {
+                try {
+                    this.products = cached.products;
+                    this.filteredProducts = cached.filteredProducts || cached.products;
+                    this.categories = cached.categories || [];
+                    this.performanceMap = new Map(cached.performanceEntries || []);
+                    // Categories select'lerini cached.categories'ten doldur
+                    var sel0 = document.getElementById('productCategory');
+                    var fSel0 = document.getElementById('productCategoryFilter');
+                    var optsHtml0 = (this.categories || []).map(function (c) {
+                        return '<option value="' + window.ProductsView.escapeHtml(c.id) + '">' +
+                               window.ProductsView.escapeHtml(c.name) + '</option>';
+                    }).join('');
+                    if (sel0)  sel0.innerHTML  = '<option value="">Seciniz</option>' + optsHtml0;
+                    if (fSel0) fSel0.innerHTML = '<option value="">Tum kategoriler</option>' + optsHtml0;
+                    this.renderTable();
+                    this.renderPagination();
+                    this.initPurchase();
+                    cacheUsed = true;
+                } catch (e) {
+                    cacheUsed = false;
+                }
+            }
+        }
+
+        if (!cacheUsed) {
+            await this.loadCategories();
+            if (!this._isActive) return;
+            await this.loadProducts();
+            if (!this._isActive) return;
+            this.initPurchase();
+
+            // === CACHE WRITE ===
+            if (window.ViewCache) {
+                var perfEntries = [];
+                if (this.performanceMap && typeof this.performanceMap.forEach === 'function') {
+                    this.performanceMap.forEach(function (v, k) { perfEntries.push([k, v]); });
+                }
+                window.ViewCache.set(cacheKey, {
+                    products: this.products || [],
+                    filteredProducts: this.filteredProducts || this.products || [],
+                    categories: this.categories || [],
+                    performanceEntries: perfEntries
+                }, 60 * 1000); // 60s TTL
+            }
+        }
 
         var self = this;
         this._on(window, 'products:updated', async function () {
@@ -350,7 +513,15 @@ window.ProductsView = {
             return;
         }
 
-        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+        var willOpen = form.style.display === 'none';
+        form.style.display = willOpen ? 'block' : 'none';
+
+        // Form AÇILIRKEN ve düzenleme modu değilsek: temiz başlat + reçete pasif
+        if (willOpen && !this.editingId) {
+            this.clearForm();
+            this.setFormTitle();
+            this.setRecipeButtonEnabled(false);
+        }
     },
 
     cancelForm: function () {
@@ -768,9 +939,16 @@ window.ProductsView = {
                     return false;
                 }
 
+                var currentTenantId = await window.SupabaseService.getTenantId();
+                if (!currentTenantId) {
+                    window.ProductsView.setModalError('Tenant bulunamadı. Lütfen tekrar giriş yapın.');
+                    return false;
+                }
+
                 var payload = {
                     name: cleanedName,
-                    type: 'product'
+                    type: 'product',
+                    tenant_id: currentTenantId
                 };
 
                 var result = await window.SupabaseService.insert('categories', payload);
@@ -989,6 +1167,18 @@ window.ProductsView = {
        RECIPE EDITOR
        ============================================================ */
 
+    /* ========================================================
+       RECIPE EDITOR — DRAFT-BASED (no auto-save)
+       Mevcut reçete DB'den çekilir → originalRecipes (snapshot)
+       Kullanıcı duzenlemeleri draftRecipes'a yazar.
+       Sadece "Kaydet" butonu DB'ye yazar (batch).
+       ======================================================== */
+
+    _newRecipeTempId: function () {
+        this._recipeTempCounter = (this._recipeTempCounter || 0) + 1;
+        return 'tmp_' + Date.now() + '_' + this._recipeTempCounter;
+    },
+
     openRecipeModal: async function (id) {
         var product = this.products.find(function (item) {
             return String(item.id) === String(id);
@@ -1003,7 +1193,8 @@ window.ProductsView = {
             open: true,
             productId: product.id,
             productName: product.name || '',
-            recipes: [],
+            originalRecipes: [],
+            draftRecipes: [],
             rawMaterials: [],
             loading: true,
             saving: false,
@@ -1012,12 +1203,12 @@ window.ProductsView = {
 
         var overlay = document.getElementById('productsRecipeOverlay');
         var subtitle = document.getElementById('productsRecipeSubtitle');
-        if (subtitle) {
-            subtitle.textContent = this.recipeState.productName;
-        }
+        if (subtitle) subtitle.textContent = this.recipeState.productName;
+
         this.setRecipeError('');
         this.renderRecipeList();
         this.renderRawMaterialSelect();
+        this.renderRecipeFooter();
 
         if (overlay) overlay.style.display = 'flex';
 
@@ -1029,11 +1220,13 @@ window.ProductsView = {
     },
 
     closeRecipeModal: function () {
+        // Hard close — dirty check yapmaz. Cagiranin sorumlulugu.
         this.recipeState = {
             open: false,
             productId: null,
             productName: '',
-            recipes: [],
+            originalRecipes: [],
+            draftRecipes: [],
             rawMaterials: [],
             loading: false,
             saving: false,
@@ -1045,13 +1238,35 @@ window.ProductsView = {
 
         var qty = document.getElementById('productsRecipeAddQty');
         if (qty) qty.value = '';
+        var search = document.getElementById('productsRecipeSearch');
+        if (search) search.value = '';
+        var hidden = document.getElementById('productsRecipeAddMaterial');
+        if (hidden) hidden.value = '';
+        this.recipeShowDropdown(false);
+    },
+
+    cancelRecipe: function () {
+        if (this.recipeState.saving) return;
+
+        if (this.isRecipeDirty()) {
+            var ok = window.confirm('Kaydedilmemiş değişiklikler var. Çıkmak istiyor musun?');
+            if (!ok) return;
+        }
+        this.closeRecipeModal();
     },
 
     handleRecipeOverlayClick: function (event) {
         var overlay = document.getElementById('productsRecipeOverlay');
         if (event.target === overlay) {
-            this.closeRecipeModal();
+            this.cancelRecipe();
         }
+    },
+
+    isRecipeDirty: function () {
+        var draft = this.recipeState.draftRecipes || [];
+        return draft.some(function (d) {
+            return d._state && d._state !== 'unchanged';
+        });
     },
 
     loadRecipesAndMaterials: async function () {
@@ -1059,6 +1274,8 @@ window.ProductsView = {
         if (!productId) return;
 
         this.recipeState.loading = true;
+        this.renderRecipeList();
+        this.renderRawMaterialSelect();
 
         var results = await Promise.all([
             window.SupabaseService.query('product_recipes', {
@@ -1084,25 +1301,43 @@ window.ProductsView = {
         var recipeResult = results[0];
         var materialResult = results[1];
 
-        if (recipeResult.error) {
-            throw recipeResult.error;
-        }
-        if (materialResult.error) {
-            throw materialResult.error;
-        }
+        if (recipeResult.error) throw recipeResult.error;
+        if (materialResult.error) throw materialResult.error;
 
         var recipes = Array.isArray(recipeResult.data) ? recipeResult.data : [];
-        // Embed'de soft-delete edilmiş raw_material kayıtları gelirse filtrele.
         recipes = recipes.filter(function (r) {
             return !r.raw_material || r.raw_material.is_deleted !== true;
         });
 
-        this.recipeState.recipes = recipes;
+        var self = this;
+        // Snapshot orijinal — degismeyecek
+        this.recipeState.originalRecipes = recipes.map(function (r) {
+            return {
+                id: r.id,
+                raw_material_id: r.raw_material_id,
+                quantity: Number(r.quantity) || 0,
+                raw_material: r.raw_material || {}
+            };
+        });
+
+        // Draft'i orijinalden seed et
+        this.recipeState.draftRecipes = this.recipeState.originalRecipes.map(function (r) {
+            return {
+                tempId: self._newRecipeTempId(),
+                recipeId: r.id,
+                raw_material_id: r.raw_material_id,
+                quantity: r.quantity,
+                raw_material: r.raw_material,
+                _state: 'unchanged'
+            };
+        });
+
         this.recipeState.rawMaterials = Array.isArray(materialResult.data) ? materialResult.data : [];
         this.recipeState.loading = false;
 
         this.renderRecipeList();
         this.renderRawMaterialSelect();
+        this.renderRecipeFooter();
     },
 
     renderRecipeList: function () {
@@ -1111,15 +1346,17 @@ window.ProductsView = {
         if (!list) return;
 
         if (this.recipeState.loading) {
-            list.innerHTML = '<div style="padding:16px; text-align:center; color:#64748b; font-size:13px;">Yükleniyor...</div>';
+            list.innerHTML = '<div style="padding:20px; text-align:center; color:#94a3b8; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px;">Yükleniyor...</div>';
             if (totalEl) totalEl.textContent = this.formatMoney(0);
             return;
         }
 
-        var recipes = this.recipeState.recipes || [];
+        var visible = (this.recipeState.draftRecipes || []).filter(function (d) {
+            return d._state !== 'removed';
+        });
 
-        if (recipes.length === 0) {
-            list.innerHTML = '<div style="padding:20px; text-align:center; color:#64748b; font-size:13px;">Bu ürün için henüz reçete satırı yok.</div>';
+        if (visible.length === 0) {
+            list.innerHTML = '<div style="padding:24px; text-align:center; color:#64748b; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px; background:#f8fafc;">Bu ürün için henüz reçete yok. Aşağıdan hammadde ekleyebilirsin.</div>';
             if (totalEl) totalEl.textContent = this.formatMoney(0);
             return;
         }
@@ -1127,103 +1364,233 @@ window.ProductsView = {
         var total = 0;
         var self = this;
 
-        var html = '<table class="data-table" style="margin:0;"><thead><tr>' +
-            '<th>Ham Madde</th>' +
-            '<th style="text-align:right;">Miktar</th>' +
-            '<th style="text-align:right;">Birim Maliyet</th>' +
-            '<th style="text-align:right;">Satır Maliyeti</th>' +
-            '<th style="width:100px;">İşlem</th>' +
-            '</tr></thead><tbody>';
-
-        html += recipes.map(function (r) {
-            var mat = r.raw_material || {};
-            var quantity = Number(r.quantity) || 0;
+        var html = visible.map(function (d) {
+            var mat = d.raw_material || {};
+            var quantity = Number(d.quantity) || 0;
             var unitCost = Number(mat.cost) || 0;
             var lineCost = quantity * unitCost;
             total += lineCost;
 
-            var name = self.escapeHtml(mat.name || '(Silinmiş ham madde)');
+            var name = self.escapeHtml(mat.name || '(Silinmiş hammadde)');
             var unit = self.escapeHtml(mat.unit || '');
-            var qtyText = self.formatQuantity(quantity) + (unit ? ' ' + unit : '');
+            var qtyText = self.formatQuantity(quantity);
+            var unitCostText = self.formatMoney(unitCost) + (unit ? ' / ' + unit : '');
+            var lineCostText = self.formatMoney(lineCost);
+            var stateBadge = '';
+            if (d._state === 'new') {
+                stateBadge = '<span style="margin-left:8px; padding:2px 8px; border-radius:999px; background:#dcfce7; color:#15803d; font-size:10px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">YENİ</span>';
+            } else if (d._state === 'modified') {
+                stateBadge = '<span style="margin-left:8px; padding:2px 8px; border-radius:999px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">DEĞİŞTİ</span>';
+            }
 
-            return '<tr>' +
-                '<td>' + name + '</td>' +
-                '<td style="text-align:right;">' + qtyText + '</td>' +
-                '<td style="text-align:right;">' + self.formatMoney(unitCost) + '</td>' +
-                '<td style="text-align:right; font-weight:700;">' + self.formatMoney(lineCost) + '</td>' +
-                '<td>' +
-                    '<button class="btn btn-secondary" style="padding:4px 8px; font-size:12px; color:#b91c1c;" onclick="window.ProductsView.removeRecipeLine(\'' + self.escapeHtml(r.id) + '\')">Kaldır</button>' +
-                '</td>' +
-                '</tr>';
+            return '<div class="recipe-row" data-tempid="' + self.escapeHtml(d.tempId) + '" ' +
+                'style="display:grid; grid-template-columns: 1.6fr 1.1fr 1.1fr 1fr auto; gap:12px; align-items:center; padding:14px 16px; border:1px solid #e2e8f0; border-radius:12px; background:#ffffff; transition:box-shadow 0.15s, border-color 0.15s;" ' +
+                'onmouseover="this.style.boxShadow=\'0 4px 14px rgba(15,23,42,0.06)\'; this.style.borderColor=\'#cbd5e1\';" ' +
+                'onmouseout="this.style.boxShadow=\'none\'; this.style.borderColor=\'#e2e8f0\';">' +
+
+                '<div style="min-width:0;">' +
+                    '<div style="font-size:14px; font-weight:700; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + name + stateBadge + '</div>' +
+                    '<div style="font-size:11px; color:#94a3b8; margin-top:2px; letter-spacing:0.04em; text-transform:uppercase;">Hammadde</div>' +
+                '</div>' +
+
+                '<div>' +
+                    '<div style="display:flex; align-items:center; gap:6px;">' +
+                        '<input type="number" step="0.0001" min="0" value="' + quantity + '" ' +
+                            'oninput="window.ProductsView.updateRecipeLineQuantity(\'' + self.escapeHtml(d.tempId) + '\', this.value)" ' +
+                            'style="width:90px; padding:8px 10px; border:1.5px solid #e2e8f0; border-radius:10px; font-size:14px; font-weight:600; color:#0f172a; background:#f8fafc; text-align:right;">' +
+                        '<span style="font-size:12px; color:#64748b; font-weight:600;">' + (unit || '-') + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:11px; color:#94a3b8; margin-top:4px; letter-spacing:0.04em; text-transform:uppercase;">Miktar</div>' +
+                '</div>' +
+
+                '<div>' +
+                    '<div style="font-size:14px; font-weight:600; color:#475569;">' + unitCostText + '</div>' +
+                    '<div style="font-size:11px; color:#94a3b8; margin-top:2px; letter-spacing:0.04em; text-transform:uppercase;">Birim Maliyet</div>' +
+                '</div>' +
+
+                '<div style="text-align:right;">' +
+                    '<div style="font-size:16px; font-weight:800; color:#15803d; letter-spacing:-0.01em;">' + lineCostText + '</div>' +
+                    '<div style="font-size:11px; color:#94a3b8; margin-top:2px; letter-spacing:0.04em; text-transform:uppercase;">Satır Maliyeti</div>' +
+                '</div>' +
+
+                '<button type="button" onclick="window.ProductsView.removeRecipeLine(\'' + self.escapeHtml(d.tempId) + '\')" ' +
+                    'title="Kaldır" ' +
+                    'style="width:34px; height:34px; border:1px solid #fecaca; background:#fef2f2; color:#b91c1c; border-radius:10px; cursor:pointer; font-size:16px; font-weight:700; transition:all 0.15s;" ' +
+                    'onmouseover="this.style.background=\'#fee2e2\'" onmouseout="this.style.background=\'#fef2f2\'">×</button>' +
+            '</div>';
         }).join('');
-
-        html += '</tbody></table>';
 
         list.innerHTML = html;
         if (totalEl) totalEl.textContent = this.formatMoney(total);
+        this.renderRecipeFooter();
+    },
+
+    renderRecipeFooter: function () {
+        var saveBtn = document.getElementById('productsRecipeSaveBtn');
+        var dirtyBadge = document.getElementById('productsRecipeDirtyBadge');
+        var dirty = this.isRecipeDirty();
+
+        if (saveBtn) {
+            if (this.recipeState.saving) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Kaydediliyor...';
+            } else {
+                saveBtn.disabled = !dirty;
+                saveBtn.textContent = 'Kaydet';
+                saveBtn.style.opacity = dirty ? '1' : '0.6';
+                saveBtn.style.cursor = dirty ? 'pointer' : 'not-allowed';
+            }
+        }
+        if (dirtyBadge) {
+            dirtyBadge.style.display = dirty ? 'inline-block' : 'none';
+        }
     },
 
     renderRawMaterialSelect: function () {
-        var select = document.getElementById('productsRecipeAddMaterial');
         var hint = document.getElementById('productsRecipeAddHint');
-        if (!select) return;
+        var dropdown = document.getElementById('productsRecipeDropdown');
+        var hidden = document.getElementById('productsRecipeAddMaterial');
+        var search = document.getElementById('productsRecipeSearch');
+
+        if (!dropdown) return;
 
         var materials = this.recipeState.rawMaterials || [];
 
         if (this.recipeState.loading) {
-            select.innerHTML = '<option value="">Yükleniyor...</option>';
+            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Yükleniyor...</div>';
             if (hint) hint.textContent = '';
             return;
         }
 
         if (materials.length === 0) {
-            select.innerHTML = '<option value="">Ham madde kaydı yok</option>';
-            if (hint) hint.textContent = 'Önce "Ham Maddeler" ekranından ham madde oluşturmalısın.';
+            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Hammadde yok.</div>';
+            if (hint) hint.textContent = 'Önce "HAMMADDELER" sekmesinden hammadde oluşturmalısın.';
             return;
         }
 
-        // Zaten reçetede olan ham maddeleri dropdown\'dan çıkar (unique constraint korunsun).
+        // Draft icindeki kullanilan id'ler (removed olanlar harici)
         var usedIds = {};
-        (this.recipeState.recipes || []).forEach(function (r) {
-            if (r.raw_material_id) usedIds[String(r.raw_material_id)] = true;
+        (this.recipeState.draftRecipes || []).forEach(function (d) {
+            if (d._state !== 'removed' && d.raw_material_id) {
+                usedIds[String(d.raw_material_id)] = true;
+            }
         });
 
         var self = this;
-        var options = '<option value="">Seçiniz</option>';
-        var availableCount = 0;
+        var query = this.normalizeName((search && search.value) || '');
 
-        materials.forEach(function (m) {
-            if (usedIds[String(m.id)]) return;
-            availableCount++;
-            var label = self.escapeHtml(m.name) +
-                ' (' + self.escapeHtml(m.unit || '') + ' · ' + self.formatMoney(m.cost) + ')';
-            options += '<option value="' + self.escapeHtml(m.id) + '">' + label + '</option>';
-        });
-
-        select.innerHTML = options;
+        var available = materials.filter(function (m) {
+            if (usedIds[String(m.id)]) return false;
+            if (!query) return true;
+            return self.normalizeName(m.name || '').indexOf(query) !== -1;
+        }).slice(0, 200);
 
         if (hint) {
-            hint.textContent = availableCount === 0
-                ? 'Tüm aktif ham maddeler zaten bu reçetede.'
+            var totalAvail = materials.filter(function (m) { return !usedIds[String(m.id)]; }).length;
+            hint.textContent = totalAvail === 0
+                ? 'Tüm aktif hammaddeler zaten bu reçetede.'
                 : '';
+        }
+
+        if (!available.length) {
+            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Sonuç bulunamadı.</div>';
+            return;
+        }
+
+        var selectedId = hidden ? hidden.value : '';
+
+        dropdown.innerHTML = available.map(function (m, idx) {
+            var id = self.escapeHtml(m.id);
+            var name = self.escapeHtml(m.name || '');
+            var unit = self.escapeHtml(m.unit || '-');
+            var cost = self.formatMoney(m.cost);
+            var isSel = String(m.id) === String(selectedId);
+            var bg = isSel ? '#ecfdf5' : (idx === 0 && !selectedId ? '#f8fafc' : '#ffffff');
+            return '<div data-rmid="' + id + '" onclick="window.ProductsView.recipeSelectMaterial(\'' + id + '\')" ' +
+                'style="padding:12px 14px; cursor:pointer; border-bottom:1px solid #f1f5f9; background:' + bg + '; transition:background 0.1s;" ' +
+                'onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'' + bg + '\'">' +
+                '<div style="font-weight:700; color:#0f172a; font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:8px;">' +
+                    '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">HM - ' + name + (isSel ? ' ✓' : '') + '</span>' +
+                '</div>' +
+                '<div style="font-size:11px; color:#64748b; margin-top:3px; display:flex; gap:8px;">' +
+                    '<span style="font-weight:600; color:#475569;">' + unit + '</span>' +
+                    '<span style="color:#cbd5e1;">•</span>' +
+                    '<span style="font-weight:700; color:#15803d;">' + cost + '</span>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+    },
+
+    recipeHandleSearch: function (value) {
+        this.renderRawMaterialSelect();
+        this.recipeShowDropdown(true);
+
+        var hidden = document.getElementById('productsRecipeAddMaterial');
+        if (hidden && hidden.value) {
+            var m = (this.recipeState.rawMaterials || []).find(function (x) { return String(x.id) === String(hidden.value); });
+            if (m) {
+                var expected = 'HM - ' + (m.name || '');
+                if (value !== expected) hidden.value = '';
+            }
         }
     },
 
-    addRecipeLine: async function () {
+    recipeShowDropdown: function (show) {
+        var dd = document.getElementById('productsRecipeDropdown');
+        if (!dd) return;
+        dd.style.display = show ? 'block' : 'none';
+    },
+
+    recipeSelectMaterial: function (id) {
+        var m = (this.recipeState.rawMaterials || []).find(function (x) { return String(x.id) === String(id); });
+        if (!m) return;
+
+        var hidden = document.getElementById('productsRecipeAddMaterial');
+        var search = document.getElementById('productsRecipeSearch');
+        var qty = document.getElementById('productsRecipeAddQty');
+
+        if (hidden) hidden.value = m.id;
+        if (search) search.value = 'HM - ' + (m.name || '');
+
+        this.recipeShowDropdown(false);
+        if (qty) qty.focus();
+    },
+
+    recipeSearchKey: function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            var hidden = document.getElementById('productsRecipeAddMaterial');
+            if (!hidden || !hidden.value) {
+                var dd = document.getElementById('productsRecipeDropdown');
+                if (dd) {
+                    var first = dd.querySelector('[data-rmid]');
+                    if (first) {
+                        this.recipeSelectMaterial(first.getAttribute('data-rmid'));
+                        return;
+                    }
+                }
+            }
+            var qty = document.getElementById('productsRecipeAddQty');
+            if (qty) qty.focus();
+        } else if (e.key === 'Escape') {
+            this.recipeShowDropdown(false);
+        }
+    },
+
+    addRecipeLine: function () {
+        // DRAFT-ONLY — DB'ye yazmaz.
         if (this.recipeState.saving) return;
 
-        var productId = this.recipeState.productId;
         var selectEl = document.getElementById('productsRecipeAddMaterial');
         var qtyEl = document.getElementById('productsRecipeAddQty');
-        var btn = document.getElementById('productsRecipeAddBtn');
 
-        if (!productId || !selectEl || !qtyEl) return;
+        if (!selectEl || !qtyEl) return;
 
         var rawMaterialId = selectEl.value;
         var quantity = Number(qtyEl.value);
 
         if (!rawMaterialId) {
-            this.setRecipeError('Ham madde seçmelisin.');
+            this.setRecipeError('Hammadde seçmelisin.');
             return;
         }
         if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -1231,81 +1598,216 @@ window.ProductsView = {
             return;
         }
 
-        // İstemci tarafı duplicate guard — unique index ayrıca DB\'de de koruyor.
-        var duplicate = (this.recipeState.recipes || []).some(function (r) {
-            return String(r.raw_material_id) === String(rawMaterialId);
+        // Draft icinde aktif (removed olmayan) ayni hammadde var mi?
+        var draft = this.recipeState.draftRecipes || [];
+        var existingActive = draft.find(function (d) {
+            return d._state !== 'removed' && String(d.raw_material_id) === String(rawMaterialId);
         });
-        if (duplicate) {
-            this.setRecipeError('Bu ham madde zaten reçetede.');
+        if (existingActive) {
+            this.setRecipeError('Bu hammadde zaten reçetede.');
             return;
         }
 
-        this.setRecipeError('');
-        this.recipeState.saving = true;
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Ekleniyor...';
-        }
+        // Daha once silinmis ayni hammadde varsa "geri al" — eski ID korunsun
+        var previouslyRemoved = draft.find(function (d) {
+            return d._state === 'removed' && String(d.raw_material_id) === String(rawMaterialId);
+        });
 
-        try {
-            var payload = {
-                product_id: productId,
+        var material = (this.recipeState.rawMaterials || []).find(function (m) {
+            return String(m.id) === String(rawMaterialId);
+        });
+
+        if (previouslyRemoved) {
+            // Restore + quantity guncelle
+            previouslyRemoved.quantity = quantity;
+            // Eger DB'de var olan satirsa, quantity orijinalden farkliysa modified
+            var orig = (this.recipeState.originalRecipes || []).find(function (o) {
+                return String(o.id) === String(previouslyRemoved.recipeId);
+            });
+            if (orig) {
+                previouslyRemoved._state = (Number(orig.quantity) === quantity) ? 'unchanged' : 'modified';
+            } else {
+                previouslyRemoved._state = 'new';
+            }
+        } else {
+            // Yeni satir
+            draft.push({
+                tempId: this._newRecipeTempId(),
+                recipeId: null,
                 raw_material_id: rawMaterialId,
-                quantity: quantity
-            };
-
-            var result = await window.SupabaseService.insert('product_recipes', payload);
-            if (!this._isActive || !this.recipeState.open) return;
-
-            if (result.error) {
-                this.setRecipeError(this.getErrorMessage(result.error, 'Reçete satırı eklenemedi.'));
-                return;
-            }
-
-            qtyEl.value = '';
-            selectEl.value = '';
-
-            await this.loadRecipesAndMaterials();
-            if (!this._isActive || !this.recipeState.open) return;
-
-            // Ürün listesindeki cost güncellenmiş olabilir (trigger) — tabloyu yenile.
-            await this.loadProducts();
-        } catch (error) {
-            this.setRecipeError(this.getErrorMessage(error, 'Reçete satırı eklenemedi.'));
-        } finally {
-            this.recipeState.saving = false;
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = '+ Ekle';
-            }
+                quantity: quantity,
+                raw_material: material || {},
+                _state: 'new'
+            });
         }
+
+        this.recipeState.draftRecipes = draft;
+        this.setRecipeError('');
+
+        // Form temizle
+        qtyEl.value = '';
+        selectEl.value = '';
+        var searchInput = document.getElementById('productsRecipeSearch');
+        if (searchInput) searchInput.value = '';
+        this.recipeShowDropdown(false);
+
+        this.renderRecipeList();
+        this.renderRawMaterialSelect();
     },
 
-    removeRecipeLine: async function (recipeId) {
-        if (!recipeId || this.recipeState.saving) return;
+    updateRecipeLineQuantity: function (tempId, value) {
+        if (this.recipeState.saving) return;
+        var draft = this.recipeState.draftRecipes || [];
+        var line = draft.find(function (d) { return d.tempId === tempId; });
+        if (!line) return;
+
+        var qty = Number(value);
+        if (!Number.isFinite(qty) || qty < 0) return;
+
+        line.quantity = qty;
+
+        // State guncelle
+        var orig = (this.recipeState.originalRecipes || []).find(function (o) {
+            return String(o.id) === String(line.recipeId);
+        });
+        if (line._state === 'new') {
+            // hala new
+        } else if (orig) {
+            line._state = (Number(orig.quantity) === qty) ? 'unchanged' : 'modified';
+        }
+
+        // Render — sadece total + footer (input focus'u kaybolmasin)
+        var totalEl = document.getElementById('productsRecipeTotalCost');
+        if (totalEl) {
+            var total = 0;
+            (this.recipeState.draftRecipes || []).forEach(function (d) {
+                if (d._state === 'removed') return;
+                var q = Number(d.quantity) || 0;
+                var c = Number((d.raw_material || {}).cost) || 0;
+                total += q * c;
+            });
+            totalEl.textContent = this.formatMoney(total);
+        }
+
+        // Satirin satir-maliyeti hucresini guncelle
+        var row = document.querySelector('.recipe-row[data-tempid="' + tempId + '"]');
+        if (row) {
+            var unitCost = Number((line.raw_material || {}).cost) || 0;
+            var lineCost = qty * unitCost;
+            var lineCostEl = row.querySelector('div[style*="text-align:right"] > div:first-child');
+            if (lineCostEl) lineCostEl.textContent = this.formatMoney(lineCost);
+
+            // State badge guncelle (basit re-render)
+            var nameDiv = row.querySelector('div:first-child > div:first-child');
+            if (nameDiv) {
+                var matName = (line.raw_material && line.raw_material.name) || '(Silinmiş hammadde)';
+                var badge = '';
+                if (line._state === 'new') {
+                    badge = '<span style="margin-left:8px; padding:2px 8px; border-radius:999px; background:#dcfce7; color:#15803d; font-size:10px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">YENİ</span>';
+                } else if (line._state === 'modified') {
+                    badge = '<span style="margin-left:8px; padding:2px 8px; border-radius:999px; background:#fef3c7; color:#92400e; font-size:10px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">DEĞİŞTİ</span>';
+                }
+                nameDiv.innerHTML = this.escapeHtml(matName) + badge;
+            }
+        }
+
+        this.renderRecipeFooter();
+    },
+
+    removeRecipeLine: function (tempId) {
+        // DRAFT-ONLY — DB'ye yazmaz.
+        if (this.recipeState.saving) return;
+        var draft = this.recipeState.draftRecipes || [];
+        var line = draft.find(function (d) { return d.tempId === tempId; });
+        if (!line) return;
+
+        if (line._state === 'new') {
+            // Henuz DB'de yok — direkt cikar
+            this.recipeState.draftRecipes = draft.filter(function (d) { return d.tempId !== tempId; });
+        } else {
+            // DB'de var — removed olarak isaretle
+            line._state = 'removed';
+        }
 
         this.setRecipeError('');
+        this.renderRecipeList();
+        this.renderRawMaterialSelect();
+    },
+
+    saveRecipe: async function () {
+        if (this.recipeState.saving) return;
+        if (!this.isRecipeDirty()) {
+            this.setRecipeError('');
+            return;
+        }
+
+        var productId = this.recipeState.productId;
+        if (!productId) return;
+
         this.recipeState.saving = true;
+        this.setRecipeError('');
+        this.renderRecipeFooter();
 
         try {
-            var result = await window.SupabaseService.update('product_recipes', recipeId, {
-                is_deleted: true
-            });
-            if (!this._isActive || !this.recipeState.open) return;
+            var draft = this.recipeState.draftRecipes || [];
 
-            if (result.error) {
-                this.setRecipeError(this.getErrorMessage(result.error, 'Reçete satırı kaldırılamadı.'));
-                return;
+            // 1) Removed (recipeId !== null) -> soft delete
+            var toRemove = draft.filter(function (d) {
+                return d._state === 'removed' && d.recipeId;
+            });
+            for (var i = 0; i < toRemove.length; i++) {
+                var rRes = await window.SupabaseService.update('product_recipes', toRemove[i].recipeId, {
+                    is_deleted: true
+                });
+                if (!this._isActive || !this.recipeState.open) return;
+                if (rRes && rRes.error) {
+                    throw rRes.error;
+                }
             }
 
+            // 2) Modified -> update quantity
+            var toModify = draft.filter(function (d) { return d._state === 'modified' && d.recipeId; });
+            for (var j = 0; j < toModify.length; j++) {
+                var mRes = await window.SupabaseService.update('product_recipes', toModify[j].recipeId, {
+                    quantity: Number(toModify[j].quantity) || 0
+                });
+                if (!this._isActive || !this.recipeState.open) return;
+                if (mRes && mRes.error) {
+                    throw mRes.error;
+                }
+            }
+
+            // 3) New -> insert
+            var toInsert = draft.filter(function (d) { return d._state === 'new'; });
+            for (var k = 0; k < toInsert.length; k++) {
+                var iRes = await window.SupabaseService.insert('product_recipes', {
+                    product_id: productId,
+                    raw_material_id: toInsert[k].raw_material_id,
+                    quantity: Number(toInsert[k].quantity) || 0
+                });
+                if (!this._isActive || !this.recipeState.open) return;
+                if (iRes && iRes.error) {
+                    throw iRes.error;
+                }
+            }
+
+            // 4) Reload + products refresh
             await this.loadRecipesAndMaterials();
             if (!this._isActive || !this.recipeState.open) return;
 
             await this.loadProducts();
+
+            if (window.Toast && typeof window.Toast.success === 'function') {
+                Toast.success('Reçete kaydedildi.');
+            }
+
+            // Modal'i kapat (kaydedildi)
+            this.closeRecipeModal();
         } catch (error) {
-            this.setRecipeError(this.getErrorMessage(error, 'Reçete satırı kaldırılamadı.'));
+            this.setRecipeError(this.getErrorMessage(error, 'Reçete kaydedilemedi.'));
         } finally {
             this.recipeState.saving = false;
+            this.renderRecipeFooter();
         }
     },
 
@@ -1753,5 +2255,2827 @@ window.ProductsView = {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    },
+
+    /* ============================================================
+       TAB SWITCHING
+       ============================================================ */
+    switchTab: function (tab) {
+        if (!tab || this._activeTab === tab) return;
+        this._activeTab = tab;
+
+        var btns = document.querySelectorAll('.products-tabs button[data-ptab]');
+        btns.forEach(function (b) {
+            var active = b.dataset.ptab === tab;
+            b.style.background = active ? '#0f172a' : 'transparent';
+            b.style.color = active ? '#fff' : '#475569';
+        });
+
+        var pProducts = document.getElementById('productsPaneProducts');
+        var pRaw = document.getElementById('productsPaneRawMaterials');
+        var pPur = document.getElementById('productsPanePurchase');
+
+        if (pProducts) pProducts.style.display = tab === 'products' ? '' : 'none';
+        if (pRaw) pRaw.style.display = tab === 'raw-materials' ? '' : 'none';
+        if (pPur) pPur.style.display = tab === 'purchase' ? '' : 'none';
+
+        if (tab === 'raw-materials') {
+            this._renderRawMaterialsPane();
+            this.loadRawMaterialsTab();
+        } else if (tab === 'purchase') {
+            this._renderPurchasePane();
+            this.loadPurchaseTab();
+        }
+    },
+
+    /* ============================================================
+       HAMMADDELER TAB
+       ============================================================ */
+    _renderRawMaterialsPane: function () {
+        if (this._tabsRendered['raw-materials']) return;
+        this._tabsRendered['raw-materials'] = true;
+
+        var pane = document.getElementById('productsPaneRawMaterials');
+        if (!pane) return;
+
+        var unitOpts = this.rmState.UNITS.map(function (u) {
+            return '<option value="' + u + '">' + u + '</option>';
+        }).join('');
+
+        pane.innerHTML = `
+            <div class="page-header">
+                <h2 class="page-title">Ham Maddeler</h2>
+            </div>
+
+            <div class="form-card" style="margin-top:12px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+                    <h3 id="rmFormTitle" style="margin:0; font-size:1rem; font-weight:700;">Ham Madde Ekle</h3>
+                    <button class="btn btn-secondary" type="button" id="rmCancelBtn" style="display:none;" onclick="window.ProductsView.rmCancelEdit()">İptal</button>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Ad</label>
+                        <input type="text" class="form-input" id="rmName" placeholder="Örn: Sığır Eti">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Birim</label>
+                        <select class="form-select" id="rmUnit">${unitOpts}</select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">KDV</label>
+                        <select class="form-select" id="rmVat">
+                            <option value="0">%0</option>
+                            <option value="1">%1</option>
+                            <option value="10">%10</option>
+                            <option value="20" selected>%20</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-top:8px; font-size:12px; color:#64748b;">
+                    Birim maliyet alışlardan otomatik hesaplanır (WAC). Manuel girilmez.
+                </div>
+
+                <div style="margin-top:14px; display:flex; gap:10px;">
+                    <button class="btn btn-primary" type="button" onclick="window.ProductsView.rmSave()">Kaydet</button>
+                </div>
+            </div>
+
+            <div class="form-card" style="margin-top:16px;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label class="form-label">Ham Madde Ara</label>
+                    <input type="text" class="form-input" id="rmSearch" placeholder="Ad ile ara..." oninput="window.ProductsView.rmHandleSearch(this.value)">
+                </div>
+            </div>
+
+            <div id="rmStatus" style="margin:16px 0;"></div>
+
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Ad</th>
+                            <th>Birim</th>
+                            <th style="text-align:right;">Birim Maliyet</th>
+                            <th style="width:260px;">İşlemler</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rmTableBody">
+                        <tr><td colspan="4" style="text-align:center; padding:24px;">Yükleniyor...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="rmPagination" style="margin-top:16px;"></div>
+
+            <!-- HAM MADDE GEÇMİŞ PANELİ -->
+            <div id="rmHistoryOverlay" onclick="window.ProductsView.rmHandleHistoryOverlayClick(event)"
+                style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9998; align-items:center; justify-content:center; padding:20px;">
+                <div onclick="event.stopPropagation()"
+                    style="width:100%; max-width:1100px; max-height:92vh; background:#fff; border-radius:18px; box-shadow:0 28px 80px rgba(15,23,42,0.28); display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="padding:20px 24px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+                        <div>
+                            <div style="font-size:18px; font-weight:800; color:#0f172a;">Alış Geçmişi</div>
+                            <div id="rmHistorySubtitle" style="margin-top:4px; font-size:13px; color:#475569;"></div>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="window.ProductsView.rmCloseHistory()" style="padding:8px 14px;">Kapat</button>
+                    </div>
+
+                    <div style="padding:16px 24px; border-bottom:1px solid #f1f5f9; background:#fafbfc;">
+                        <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">
+                            <div class="form-group" style="margin-bottom:0; flex:1; min-width:160px;">
+                                <label class="form-label" style="font-size:11px;">Başlangıç</label>
+                                <input type="date" class="form-input" id="rmHistStart" oninput="window.ProductsView.rmApplyHistoryFilter()">
+                            </div>
+                            <div class="form-group" style="margin-bottom:0; flex:1; min-width:160px;">
+                                <label class="form-label" style="font-size:11px;">Bitiş</label>
+                                <input type="date" class="form-input" id="rmHistEnd" oninput="window.ProductsView.rmApplyHistoryFilter()">
+                            </div>
+                            <div class="form-group" style="margin-bottom:0; flex:1; min-width:200px;">
+                                <label class="form-label" style="font-size:11px;">Sırala</label>
+                                <select class="form-select" id="rmHistSort" onchange="window.ProductsView.rmApplyHistoryFilter()">
+                                    <option value="date-desc">Tarih (Yeni → Eski)</option>
+                                    <option value="date-asc">Tarih (Eski → Yeni)</option>
+                                    <option value="total-desc">Toplam (Yüksek → Düşük)</option>
+                                    <option value="total-asc">Toplam (Düşük → Yüksek)</option>
+                                    <option value="unit-desc">Birim Maliyet (Yüksek → Düşük)</option>
+                                    <option value="unit-asc">Birim Maliyet (Düşük → Yüksek)</option>
+                                    <option value="qty-desc">Miktar (Yüksek → Düşük)</option>
+                                    <option value="qty-asc">Miktar (Düşük → Yüksek)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom:0;">
+                                <button type="button" class="btn btn-secondary" onclick="window.ProductsView.rmClearHistoryFilter()">Filtreleri Temizle</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="rmHistorySummary" style="padding:12px 24px; background:#f8fafc; border-bottom:1px solid #f1f5f9; display:flex; gap:24px; flex-wrap:wrap; font-size:13px; color:#475569;"></div>
+
+                    <div style="flex:1; overflow:auto;">
+                        <table class="data-table" style="margin:0;">
+                            <thead style="position:sticky; top:0; background:#fff; z-index:1;">
+                                <tr>
+                                    <th>Tarih</th>
+                                    <th style="text-align:right;">Miktar</th>
+                                    <th>Birim</th>
+                                    <th style="text-align:right;">Birim Maliyet</th>
+                                    <th style="text-align:right;">KDV</th>
+                                    <th style="text-align:right;">Toplam Fiyat</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rmHistoryBody">
+                                <tr><td colspan="6" style="text-align:center; padding:24px;">Yükleniyor...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    loadRawMaterialsTab: async function () {
+        var tbody = document.getElementById('rmTableBody');
+        if (!tbody) return;
+
+        try {
+            var result = await window.SupabaseService.query('raw_materials', {
+                filters: [{ op: 'eq', column: 'is_deleted', value: false }],
+                order: { column: 'name', asc: true },
+                select: 'id,name,unit,cost,vat_rate,is_active,created_at'
+            });
+            if (!this._isActive) return;
+
+            if (result.error) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">Ham maddeler yüklenemedi.</td></tr>';
+                this.rmSetStatus(this.getErrorMessage(result.error, 'raw_materials okunamadı.'), 'error');
+                return;
+            }
+
+            this.rmState.materials = Array.isArray(result.data) ? result.data : [];
+            this.rmRenderTable();
+            this.rmSetStatus(this.rmState.materials.length + ' ham madde yüklendi.', 'success');
+        } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
+            this.rmSetStatus(this.getErrorMessage(err, 'Beklenmeyen hata.'), 'error');
+        }
+    },
+
+    rmRenderTable: function () {
+        var tbody = document.getElementById('rmTableBody');
+        if (!tbody) return;
+
+        var self = this;
+        var q = this.normalizeName(this.rmState.search || '');
+        var filtered = this.rmState.materials.filter(function (m) {
+            if (!q) return true;
+            return self.normalizeName(m.name || '').indexOf(q) !== -1;
+        });
+
+        var pageSize = this.rmState.pageSize || 30;
+        var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        if (this.rmState.page > totalPages) this.rmState.page = totalPages;
+        if (this.rmState.page < 1) this.rmState.page = 1;
+
+        var start = (this.rmState.page - 1) * pageSize;
+        var pageRows = filtered.slice(start, start + pageSize);
+
+        if (!pageRows.length) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#64748b;">Kayıt yok.</td></tr>';
+        } else {
+            tbody.innerHTML = pageRows.map(function (m) {
+                var id = self.escapeHtml(m.id);
+                return '<tr>' +
+                    '<td style="font-weight:600;">' + self.escapeHtml(m.name || '-') + '</td>' +
+                    '<td>' + self.escapeHtml(m.unit || '-') + '</td>' +
+                    '<td style="text-align:right; font-weight:700;">' + self.formatMoney(m.cost) + '</td>' +
+                    '<td><div style="display:flex; gap:6px; flex-wrap:wrap;">' +
+                        '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.rmViewHistory(\'' + id + '\')">👁 Görüntüle</button>' +
+                        '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.rmEdit(\'' + id + '\')">Düzenle</button>' +
+                        '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px; color:#b91c1c;" onclick="window.ProductsView.rmRemove(\'' + id + '\')">Sil</button>' +
+                    '</div></td>' +
+                '</tr>';
+            }).join('');
+        }
+
+        // Pagination
+        var pagEl = document.getElementById('rmPagination');
+        if (pagEl) {
+            var total = filtered.length;
+            var from = total === 0 ? 0 : start + 1;
+            var to = Math.min(start + pageSize, total);
+            var page = this.rmState.page;
+
+            pagEl.innerHTML = '' +
+                '<div style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border:1px solid #e2e8f0; border-radius:14px; background:#ffffff;">' +
+                    '<div style="display:flex; align-items:center; gap:10px;">' +
+                        '<span style="font-size:13px; color:#475569; font-weight:600;">Sayfa başı</span>' +
+                        '<select class="form-select" style="width:auto; min-width:90px;" onchange="window.ProductsView.rmChangePageSize(this.value)">' +
+                            '<option value="30"' + (pageSize === 30 ? ' selected' : '') + '>30</option>' +
+                            '<option value="50"' + (pageSize === 50 ? ' selected' : '') + '>50</option>' +
+                            '<option value="100"' + (pageSize === 100 ? ' selected' : '') + '>100</option>' +
+                        '</select>' +
+                    '</div>' +
+                    '<div style="font-size:13px; color:#64748b; font-weight:600;">' + from + '-' + to + ' / ' + total + '</div>' +
+                    '<div style="display:flex; align-items:center; gap:8px;">' +
+                        '<button class="btn btn-secondary" type="button" onclick="window.ProductsView.rmPrevPage()"' + (page <= 1 ? ' disabled style="opacity:0.5; cursor:not-allowed;"' : '') + '>Önceki</button>' +
+                        '<span style="min-width:90px; text-align:center; font-size:13px; font-weight:700; color:#334155;">' + page + ' / ' + totalPages + '</span>' +
+                        '<button class="btn btn-secondary" type="button" onclick="window.ProductsView.rmNextPage()"' + (page >= totalPages ? ' disabled style="opacity:0.5; cursor:not-allowed;"' : '') + '>Sonraki</button>' +
+                    '</div>' +
+                '</div>';
+        }
+    },
+
+    rmPrevPage: function () {
+        if (this.rmState.page <= 1) return;
+        this.rmState.page--;
+        this.rmRenderTable();
+    },
+
+    rmNextPage: function () {
+        this.rmState.page++;
+        this.rmRenderTable();
+    },
+
+    rmChangePageSize: function (v) {
+        this.rmState.pageSize = Number(v) || 30;
+        this.rmState.page = 1;
+        this.rmRenderTable();
+    },
+
+    rmHandleSearch: function (value) {
+        this.rmState.search = String(value || '');
+        this.rmState.page = 1;
+        this.rmRenderTable();
+    },
+
+    /* ============================================================
+       HAM MADDE GEÇMİŞ PANELİ
+       ============================================================ */
+    rmViewHistory: async function (id) {
+        var m = this.rmState.materials.find(function (x) { return String(x.id) === String(id); });
+        if (!m) return;
+
+        this.rmState.historyOpen = true;
+        this.rmState.historyMaterial = m;
+        this.rmState.historyRows = [];
+
+        var overlay = document.getElementById('rmHistoryOverlay');
+        var sub = document.getElementById('rmHistorySubtitle');
+        if (overlay) overlay.style.display = 'flex';
+        if (sub) sub.textContent = 'HM - ' + (m.name || '') + '  ·  Birim: ' + (m.unit || '-') + '  ·  Güncel Maliyet: ' + this.formatMoney(m.cost);
+
+        this.rmClearHistoryFilter(true);
+        await this.rmLoadHistory(m.id);
+    },
+
+    rmCloseHistory: function () {
+        this.rmState.historyOpen = false;
+        var overlay = document.getElementById('rmHistoryOverlay');
+        if (overlay) overlay.style.display = 'none';
+        this.rmState.historyMaterial = null;
+        this.rmState.historyRows = [];
+    },
+
+    rmHandleHistoryOverlayClick: function (e) {
+        var overlay = document.getElementById('rmHistoryOverlay');
+        if (e.target === overlay) this.rmCloseHistory();
+    },
+
+    rmLoadHistory: async function (rawMaterialId) {
+        var tbody = document.getElementById('rmHistoryBody');
+        if (!tbody) return;
+
+        try {
+            var client = window.SupabaseService && typeof window.SupabaseService.getClient === 'function'
+                ? window.SupabaseService.getClient() : null;
+            if (!client) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#dc2626;">Client yüklenemedi.</td></tr>';
+                return;
+            }
+
+            var resp = await client
+                .from('purchase_items')
+                .select('id,quantity,unit,unit_cost,line_total,vat_rate,discount_rate,created_at')
+                .eq('raw_material_id', rawMaterialId)
+                .eq('is_deleted', false)
+                .order('created_at', { ascending: false });
+
+            if (!this._isActive || !this.rmState.historyOpen) return;
+
+            if (resp.error) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#dc2626;">' + this.escapeHtml(resp.error.message || 'Hata') + '</td></tr>';
+                return;
+            }
+
+            this.rmState.historyRows = Array.isArray(resp.data) ? resp.data : [];
+            this.rmRenderHistoryTable();
+        } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
+        }
+    },
+
+    rmApplyHistoryFilter: function () {
+        var f = this.rmState.historyFilter;
+        f.startDate = (document.getElementById('rmHistStart') || {}).value || '';
+        f.endDate = (document.getElementById('rmHistEnd') || {}).value || '';
+        f.sortBy = (document.getElementById('rmHistSort') || {}).value || 'date-desc';
+        this.rmRenderHistoryTable();
+    },
+
+    rmClearHistoryFilter: function (skipRender) {
+        this.rmState.historyFilter = { startDate: '', endDate: '', sortBy: 'date-desc' };
+        ['rmHistStart', 'rmHistEnd'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        var sortEl = document.getElementById('rmHistSort');
+        if (sortEl) sortEl.value = 'date-desc';
+        if (!skipRender) this.rmRenderHistoryTable();
+    },
+
+    rmRenderHistoryTable: function () {
+        var tbody = document.getElementById('rmHistoryBody');
+        if (!tbody) return;
+
+        var f = this.rmState.historyFilter;
+        var self = this;
+
+        var startTs = f.startDate ? new Date(f.startDate + 'T00:00:00').getTime() : null;
+        var endTs = f.endDate ? new Date(f.endDate + 'T23:59:59').getTime() : null;
+
+        var rows = (this.rmState.historyRows || []).filter(function (r) {
+            var ts = r.created_at ? new Date(r.created_at).getTime() : 0;
+            if (startTs !== null && ts < startTs) return false;
+            if (endTs !== null && ts > endTs) return false;
+            return true;
+        });
+
+        // Sort
+        var sortBy = f.sortBy || 'date-desc';
+        rows.sort(function (a, b) {
+            var av, bv;
+            switch (sortBy) {
+                case 'date-asc':   av = new Date(a.created_at || 0).getTime(); bv = new Date(b.created_at || 0).getTime(); return av - bv;
+                case 'date-desc':  av = new Date(a.created_at || 0).getTime(); bv = new Date(b.created_at || 0).getTime(); return bv - av;
+                case 'total-asc':  return (Number(a.line_total) || 0) - (Number(b.line_total) || 0);
+                case 'total-desc': return (Number(b.line_total) || 0) - (Number(a.line_total) || 0);
+                case 'unit-asc':   return (Number(a.unit_cost) || 0) - (Number(b.unit_cost) || 0);
+                case 'unit-desc':  return (Number(b.unit_cost) || 0) - (Number(a.unit_cost) || 0);
+                case 'qty-asc':    return (Number(a.quantity) || 0) - (Number(b.quantity) || 0);
+                case 'qty-desc':   return (Number(b.quantity) || 0) - (Number(a.quantity) || 0);
+                default:           return 0;
+            }
+        });
+
+        // Summary — WAC: ortalama = sum(unit_cost * qty) / sum(qty)
+        var sumQty = 0, sumTotal = 0, sumNetCost = 0;
+        rows.forEach(function (r) {
+            var qty = Number(r.quantity) || 0;
+            var uc = Number(r.unit_cost) || 0;
+            sumQty += qty;
+            sumTotal += Number(r.line_total) || 0;
+            sumNetCost += uc * qty;
+        });
+        var avgUnit = sumQty > 0 ? (sumNetCost / sumQty) : 0;
+        var avgUnitStr = '₺' + (Number(avgUnit) || 0).toLocaleString('tr-TR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+
+        var summary = document.getElementById('rmHistorySummary');
+        if (summary) {
+            summary.innerHTML =
+                '<div><strong style="color:#0f172a;">' + rows.length + '</strong> kayıt</div>' +
+                '<div>Toplam Tutar: <strong style="color:#059669;">' + self.formatMoney(sumTotal) + '</strong></div>' +
+                '<div>Ort. Birim Maliyet: <strong style="color:#6366f1;">' + avgUnitStr + '</strong></div>';
+        }
+
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#64748b;">Filtreye uygun kayıt yok.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = rows.map(function (r) {
+            var d = r.created_at ? new Date(r.created_at) : null;
+            var dateStr = d ? d.toLocaleDateString('tr-TR') + ' ' + d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : '-';
+            return '<tr>' +
+                '<td>' + self.escapeHtml(dateStr) + '</td>' +
+                '<td style="text-align:right; font-weight:600;">' + self.formatNumber(r.quantity) + '</td>' +
+                '<td>' + self.escapeHtml(r.unit || '-') + '</td>' +
+                '<td style="text-align:right;">' + self.formatMoney(r.unit_cost) + '</td>' +
+                '<td style="text-align:right; color:#6366f1;">%' + self.formatNumber(r.vat_rate) + '</td>' +
+                '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(r.line_total) + '</td>' +
+            '</tr>';
+        }).join('');
+    },
+
+    rmEdit: function (id) {
+        var m = this.rmState.materials.find(function (x) { return String(x.id) === String(id); });
+        if (!m) return;
+
+        this.rmState.editingId = m.id;
+
+        var n = document.getElementById('rmName');
+        var u = document.getElementById('rmUnit');
+        var v = document.getElementById('rmVat');
+        var t = document.getElementById('rmFormTitle');
+        var x = document.getElementById('rmCancelBtn');
+
+        if (n) n.value = m.name || '';
+        if (u) u.value = m.unit || 'gr';
+        if (v) v.value = (m.vat_rate != null ? String(m.vat_rate) : '20');
+        if (t) t.textContent = 'Ham Madde Düzenle';
+        if (x) x.style.display = '';
+
+        var pane = document.getElementById('productsPaneRawMaterials');
+        if (pane) pane.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+
+    rmCancelEdit: function () {
+        this.rmState.editingId = null;
+        this.rmClearForm();
+    },
+
+    rmClearForm: function () {
+        var n = document.getElementById('rmName');
+        var u = document.getElementById('rmUnit');
+        var v = document.getElementById('rmVat');
+        var t = document.getElementById('rmFormTitle');
+        var x = document.getElementById('rmCancelBtn');
+
+        if (n) n.value = '';
+        if (u) u.value = 'gr';
+        if (v) v.value = '20';
+        if (t) t.textContent = 'Ham Madde Ekle';
+        if (x) x.style.display = 'none';
+    },
+
+    rmSave: async function () {
+        var nEl = document.getElementById('rmName');
+        var uEl = document.getElementById('rmUnit');
+        var vEl = document.getElementById('rmVat');
+
+        var name = nEl ? String(nEl.value || '').trim() : '';
+        var unit = uEl ? String(uEl.value || '').trim() : '';
+        var vat = vEl ? parseFloat(vEl.value) : 20;
+
+        var errs = [];
+        if (!name) errs.push('Ad zorunlu.');
+        if (this.rmState.UNITS.indexOf(unit) === -1) errs.push('Birim geçersiz.');
+        if (!Number.isFinite(vat) || vat < 0 || vat > 100) errs.push('KDV oranı 0-100 arası olmalı.');
+
+        if (errs.length) { this.rmSetStatus(errs.join(' '), 'error'); return; }
+
+        if (!window.SupabaseService || !window.SupabaseService.isConnected()) {
+            this.rmSetStatus('Supabase bağlı değil.', 'error');
+            return;
+        }
+
+        var self = this;
+        var dup = this.rmState.materials.some(function (m) {
+            if (self.rmState.editingId && String(m.id) === String(self.rmState.editingId)) return false;
+            return self.normalizeName(m.name) === self.normalizeName(name);
+        });
+        if (dup) { this.rmSetStatus('Aynı isimde ham madde var.', 'error'); return; }
+
+        // Cost manuel girilmiyor — yeni kayıtlarda 0 (WAC ilk alışta dolduracak);
+        // düzenlemede cost'a dokunmuyoruz. vat_rate her iki durumda da yazılır.
+        var resp;
+        if (this.rmState.editingId) {
+            resp = await window.SupabaseService.update('raw_materials', this.rmState.editingId, {
+                name: name,
+                unit: unit,
+                vat_rate: vat
+            });
+        } else {
+            resp = await window.SupabaseService.insert('raw_materials', {
+                name: name,
+                unit: unit,
+                cost: 0,
+                vat_rate: vat
+            });
+        }
+        if (!this._isActive) return;
+
+        if (resp && resp.error) {
+            this.rmSetStatus(this.getErrorMessage(resp.error, 'Kaydedilemedi.'), 'error');
+            return;
+        }
+
+        this.rmSetStatus(this.rmState.editingId ? 'Güncellendi.' : 'Eklendi.', 'success');
+        this.rmState.editingId = null;
+        this.rmClearForm();
+        await this.loadRawMaterialsTab();
+    },
+
+    rmRemove: async function (id) {
+        var m = this.rmState.materials.find(function (x) { return String(x.id) === String(id); });
+        if (!m) return;
+        var ok = window.confirm('"' + (m.name || '') + '" ham maddesi silinsin mi?');
+        if (!ok) return;
+
+        var resp = await window.SupabaseService.update('raw_materials', id, { is_deleted: true, is_active: false });
+        if (!this._isActive) return;
+
+        if (resp && resp.error) {
+            this.rmSetStatus(this.getErrorMessage(resp.error, 'Silinemedi.'), 'error');
+            return;
+        }
+
+        if (this.rmState.editingId && String(this.rmState.editingId) === String(id)) {
+            this.rmState.editingId = null;
+            this.rmClearForm();
+        }
+
+        this.rmSetStatus('Silindi.', 'success');
+        await this.loadRawMaterialsTab();
+    },
+
+    rmSetStatus: function (msg, type) {
+        var el = document.getElementById('rmStatus');
+        if (!el) return;
+        if (type === 'success') {
+            el.innerHTML = '<div style="padding:12px 14px; border-radius:12px; background:#ecfdf5; border:1px solid #86efac; color:#166534; font-size:13px; font-weight:600;">' + this.escapeHtml(msg) + '</div>';
+        } else {
+            el.innerHTML = '<div style="padding:12px 14px; border-radius:12px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600;">' + this.escapeHtml(msg) + '</div>';
+        }
+    },
+
+    /* ============================================================
+       ALIŞ TAB
+       ============================================================ */
+    _renderPurchasePane: function () {
+        if (this._tabsRendered['purchase']) return;
+        this._tabsRendered['purchase'] = true;
+
+        var pane = document.getElementById('productsPanePurchase');
+        if (!pane) return;
+
+        var today = new Date();
+        var dateStr = today.toLocaleDateString('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
+
+        pane.innerHTML = `
+            <div class="page-header">
+                <h2 class="page-title">Alış Faturası</h2>
+            </div>
+
+            <!-- INVOICE CARD -->
+            <div style="margin-top:12px; background:#fff; border:1px solid #e2e8f0; border-radius:18px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,0.04);">
+                <div style="padding:20px 24px; background:linear-gradient(135deg,#0f172a,#1e293b); color:#fff; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+                    <div>
+                        <div style="font-size:11px; font-weight:600; color:#94a3b8; letter-spacing:0.1em;">ALIŞ FATURASI</div>
+                        <div style="font-size:20px; font-weight:800; margin-top:4px;">Taslak</div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+                        <!-- KDV TOGGLE -->
+                        <div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); padding:4px; border-radius:10px;">
+                            <button type="button" id="puVatModeExcl" onclick="window.ProductsView.puSetVatMode(false)"
+                                style="padding:7px 14px; border:none; border-radius:7px; font-size:12px; font-weight:700; cursor:pointer; background:#fff; color:#0f172a;">
+                                KDV HARİÇ
+                            </button>
+                            <button type="button" id="puVatModeIncl" onclick="window.ProductsView.puSetVatMode(true)"
+                                style="padding:7px 14px; border:none; border-radius:7px; font-size:12px; font-weight:700; cursor:pointer; background:transparent; color:#cbd5e1;">
+                                KDV DAHİL
+                            </button>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:11px; font-weight:600; color:#94a3b8; letter-spacing:0.1em;">TARİH</div>
+                            <div style="font-size:15px; font-weight:700; margin-top:4px;">${dateStr}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TARIH + SUPPLIER + DESCRIPTION (UI only, optional) -->
+                <div style="padding:16px 24px; background:#fff; border-bottom:1px solid #f1f5f9; display:grid; grid-template-columns: 0.6fr 1fr 1.6fr; gap:14px;">
+                    <div>
+                        <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; margin-bottom:6px;">TARİH</label>
+                        <input type="date" id="puDate" class="form-input"
+                            style="font-size:14px;" />
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; margin-bottom:6px;">FİRMA</label>
+                        <input type="text" id="puSupplier" class="form-input" placeholder="Tedarikçi / firma adı (opsiyonel)"
+                            oninput="window.ProductsView.puSetSupplier(this.value)"
+                            style="font-size:14px;" />
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; margin-bottom:6px;">AÇIKLAMA</label>
+                        <input type="text" id="puDescription" class="form-input" placeholder="Fatura açıklaması (opsiyonel)"
+                            oninput="window.ProductsView.puSetDescription(this.value)"
+                            style="font-size:14px;" />
+                    </div>
+                </div>
+
+                <!-- COLUMN HEADERS (7 col: HM | MIKTAR | BIRIM | ISK% | KDV | TOPLAM | x) -->
+                <div style="padding:12px 24px; background:#f8fafc; border-bottom:1px solid #e2e8f0; display:grid; grid-template-columns: 1.9fr 0.85fr 0.95fr 0.65fr 0.7fr 1.05fr 36px; gap:8px; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em;">
+                    <div>HAM MADDE</div>
+                    <div style="text-align:right;">MİKTAR</div>
+                    <div style="text-align:right;" id="puHdrUnit">BİRİM FİYAT (KDV HARİÇ)</div>
+                    <div style="text-align:right;">% İSK</div>
+                    <div style="text-align:right;">KDV</div>
+                    <div style="text-align:right;">TOPLAM</div>
+                    <div></div>
+                </div>
+
+                <!-- LINES -->
+                <div id="puLinesWrap" style="padding:8px 12px;"></div>
+
+                <!-- ADD LINE -->
+                <div style="padding:12px 24px; border-top:1px solid #f1f5f9;">
+                    <button class="btn btn-secondary" type="button" onclick="window.ProductsView.puAddLine()" style="width:100%; padding:12px; border:1.5px dashed #cbd5e1; background:#fafbfc;">
+                        + Satır Ekle
+                    </button>
+                </div>
+
+                <!-- GENEL ISKONTO PANELI + TOTALS -->
+                <div style="padding:20px 24px; background:#fafbfc; border-top:1px solid #e2e8f0; display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+                    <!-- LEFT: Genel iskonto -->
+                    <div style="background:#ffffff; border:1.5px solid #fde68a; border-radius:12px; padding:14px 16px;">
+                        <div style="font-size:11px; font-weight:700; color:#92400e; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:10px;">Genel İskonto</div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <select id="puGenDiscType" class="form-select"
+                                onchange="window.ProductsView.puSetGeneralDiscountType(this.value)"
+                                style="flex:0 0 auto; min-width:90px; font-size:14px;">
+                                <option value="amount" selected>₺ TL</option>
+                                <option value="percent">% Yüzde</option>
+                            </select>
+                            <input type="number" id="puGenDiscValue" class="form-input"
+                                placeholder="0"
+                                step="0.01" min="0"
+                                value=""
+                                oninput="window.ProductsView.puSetGeneralDiscountValue(this.value)"
+                                style="flex:1; text-align:right; font-size:14px;">
+                        </div>
+                        <div style="margin-top:8px; font-size:12px; color:#92400e; font-weight:600;">
+                            KDV'den önce uygulanır. Tüm satırlara orantılı dağıtılır.
+                        </div>
+                    </div>
+
+                    <!-- RIGHT: Totals -->
+                    <div style="display:flex; justify-content:flex-end;">
+                        <div style="min-width:320px;">
+                            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:14px; color:#475569;">
+                                <span>Brüt Toplam</span>
+                                <span id="puGrandBrut" style="font-weight:700; color:#0f172a;">₺0,00</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:14px; color:#b45309;">
+                                <span>Satır İskontoları</span>
+                                <span id="puGrandLineDisc" style="font-weight:700;">−₺0,00</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:14px; color:#b45309;">
+                                <span>Genel İskonto</span>
+                                <span id="puGrandGenDisc" style="font-weight:700;">−₺0,00</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:14px; color:#0f172a; border-top:1px solid #e2e8f0; margin-top:6px; padding-top:10px;">
+                                <span>Ara Toplam (KDV hariç)</span>
+                                <span id="puGrandNet" style="font-weight:700;">₺0,00</span>
+                            </div>
+                            <div id="puVatBreakdown" style="padding:4px 0;"></div>
+                            <div style="display:flex; justify-content:space-between; padding:6px 0; font-size:14px; color:#475569; border-top:1px solid #e2e8f0; margin-top:6px; padding-top:10px;">
+                                <span>Toplam KDV</span>
+                                <span id="puGrandVat" style="font-weight:700; color:#6366f1;">₺0,00</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; padding:12px 0 0 0; font-size:18px; font-weight:800; color:#059669; border-top:2px solid #0f172a; margin-top:10px;">
+                                <span>GENEL TOPLAM</span>
+                                <span id="puGrandTotal">₺0,00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ACTIONS -->
+                <div style="padding:16px 24px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
+                    <button class="btn btn-secondary" type="button" onclick="window.ProductsView.puClearAll()">Temizle</button>
+                    <button class="btn btn-primary" type="button" id="puSaveAllBtn" onclick="window.ProductsView.puSaveAll()" style="min-width:160px;">Faturayı Kaydet</button>
+                </div>
+            </div>
+
+            <div id="puStatus" style="margin:16px 0;"></div>
+
+            <div class="page-header" style="margin-top:24px; display:flex; justify-content:space-between; align-items:center;">
+                <h2 class="page-title" style="font-size:1rem; margin:0;">Son Alışlar</h2>
+            </div>
+
+            <!-- FİLTRE BAR -->
+            <div style="margin:10px 0 12px 0; padding:14px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.04em;">BAŞLANGIÇ</label>
+                    <input type="date" id="puFilterStart" class="form-input" style="font-size:13px; min-width:150px;">
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <label style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.04em;">BİTİŞ</label>
+                    <input type="date" id="puFilterEnd" class="form-input" style="font-size:13px; min-width:150px;">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="window.ProductsView.puApplyRecentFilter()" style="padding:8px 16px; font-size:13px;">Filtrele</button>
+                <button type="button" class="btn btn-secondary" onclick="window.ProductsView.puClearRecentFilter()" style="padding:8px 16px; font-size:13px;">Temizle</button>
+                <div style="margin-left:auto; font-size:12px; color:#64748b;" id="puRecentCount">—</div>
+            </div>
+
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="white-space:nowrap;">Tarih</th>
+                            <th>Firma</th>
+                            <th>Ham Madde</th>
+                            <th style="text-align:right;">Miktar</th>
+                            <th style="text-align:right;">Birim Fiyat</th>
+                            <th style="text-align:right; width:60px;">KDV</th>
+                            <th style="text-align:right;">Toplam</th>
+                            <th style="width:190px; text-align:right;">İşlem</th>
+                        </tr>
+                    </thead>
+                    <tbody id="puTableBody">
+                        <tr><td colspan="8" style="text-align:center; padding:24px;">Yükleniyor...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- PAGINATION -->
+            <div id="puPagination" style="margin-top:12px; display:flex; justify-content:center; gap:6px; flex-wrap:wrap;"></div>
+
+            <!-- VIEW MODAL -->
+            <div id="puViewModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.5); backdrop-filter:blur(4px); z-index:9998; align-items:center; justify-content:center; padding:20px;">
+                <div style="background:#fff; width:100%; max-width:640px; border-radius:18px; box-shadow:0 25px 60px rgba(15,23,42,0.25); overflow:hidden; max-height:90vh; display:flex; flex-direction:column;">
+                    <div style="padding:20px 24px; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0; font-size:18px; font-weight:800; color:#0f172a;">Alış Detay</h3>
+                        <button type="button" onclick="window.ProductsView.puCloseView()" style="border:none; background:transparent; color:#64748b; font-size:22px; cursor:pointer; padding:4px 8px; border-radius:6px;">×</button>
+                    </div>
+                    <div id="puViewBody" style="padding:20px 24px; overflow-y:auto;"></div>
+                    <div style="padding:14px 24px; border-top:1px solid #f1f5f9; display:flex; justify-content:flex-end; gap:10px;">
+                        <button type="button" class="btn btn-secondary" onclick="window.ProductsView.puCloseView()">Kapat</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Close dropdowns on outside click
+        var self = this;
+        document.addEventListener('click', function (e) {
+            if (self._activeTab !== 'purchase') return;
+            var dds = document.querySelectorAll('.pu-line-dropdown');
+            dds.forEach(function (dd) {
+                var parent = dd.closest('.pu-line-row');
+                if (!parent) return;
+                if (!parent.contains(e.target)) dd.style.display = 'none';
+            });
+        });
+
+        // Start with 1 empty line
+        if (!this.purchaseState.lines.length) {
+            this.puAddLine();
+        } else {
+            this.puRenderLines();
+        }
+
+        // Default tarih = bugün (kullanıcı değiştirebilir)
+        var puDateEl = document.getElementById('puDate');
+        if (puDateEl && !puDateEl.value) {
+            puDateEl.value = new Date().toISOString().slice(0, 10);
+        }
+    },
+
+    loadPurchaseTab: async function () {
+        await Promise.all([
+            this.puLoadRawMaterials(),
+            this.puLoadRecent()
+        ]);
+    },
+
+    puLoadRawMaterials: async function () {
+        try {
+            var result = await window.SupabaseService.query('raw_materials', {
+                filters: [{ op: 'eq', column: 'is_deleted', value: false }],
+                order: { column: 'name', asc: true },
+                select: 'id,name,unit,cost,vat_rate'
+            });
+            if (!this._isActive) return;
+            if (result.error) {
+                this.puSetStatus(this.getErrorMessage(result.error, 'Ham maddeler yüklenemedi.'), 'error');
+                return;
+            }
+            this.purchaseState.rawMaterials = Array.isArray(result.data) ? result.data : [];
+        } catch (err) {
+            this.puSetStatus(this.getErrorMessage(err, 'Beklenmeyen hata.'), 'error');
+        }
+    },
+
+    // ============================================================
+    // INVOICE-LEVEL HELPERS (note sütununda JSON metadata ile)
+    // ============================================================
+    _puMakeInvoiceId: function () {
+        try {
+            if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+                return crypto.randomUUID();
+            }
+        } catch (e) {}
+        // RFC4122 v4 fallback
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = (Math.random() * 16) | 0;
+            var v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+        });
+    },
+
+    _puParseNote: function (note) {
+        // HER DURUMDA güvenli sonuç döner — asla throw etmez
+        var empty = { invoice_id: null, supplier: null, description: null, general_discount: null };
+        try {
+            if (note === null || typeof note === 'undefined' || note === '') return empty;
+
+            if (typeof note === 'object') {
+                try {
+                    return {
+                        invoice_id: note.invoice_id || null,
+                        supplier: note.supplier || null,
+                        description: note.description || null,
+                        general_discount: note.general_discount || null
+                    };
+                } catch (e1) { return empty; }
+            }
+
+            var str = String(note).trim();
+            if (!str) return empty;
+
+            if (str.charAt(0) === '{') {
+                try {
+                    var obj = JSON.parse(str);
+                    if (obj && typeof obj === 'object') {
+                        return {
+                            invoice_id: obj.invoice_id || null,
+                            supplier: obj.supplier || null,
+                            description: obj.description || null,
+                            general_discount: obj.general_discount || null
+                        };
+                    }
+                } catch (e2) {
+                    return { invoice_id: null, supplier: null, description: str, general_discount: null };
+                }
+                return empty;
+            }
+
+            return { invoice_id: null, supplier: null, description: str, general_discount: null };
+        } catch (eAll) {
+            return empty;
+        }
+    },
+
+    _puMakeNote: function (invoiceId, supplier, description, generalDiscount) {
+        var payload = {
+            invoice_id: invoiceId || null,
+            supplier: supplier || null,
+            description: description || null
+        };
+        if (generalDiscount && typeof generalDiscount === 'object'
+            && Number(generalDiscount.value) > 0) {
+            payload.general_discount = {
+                type: generalDiscount.type === 'percent' ? 'percent' : 'amount',
+                value: Number(generalDiscount.value) || 0
+            };
+        }
+        return JSON.stringify(payload);
+    },
+
+    _puGroupByInvoice: function (items) {
+        var self = this;
+        var map = {};
+        var order = [];
+
+        (items || []).forEach(function (it) {
+            var meta = self._puParseNote(it.note);
+            // legacy item (invoice_id yok): her item kendi faturası
+            var invId = meta.invoice_id || ('legacy:' + it.id);
+            if (!map[invId]) {
+                map[invId] = {
+                    invoice_id: invId,
+                    invoice_no: (it.invoice_no != null) ? Number(it.invoice_no) : null,
+                    is_legacy: !meta.invoice_id,
+                    supplier: meta.supplier,
+                    description: meta.description,
+                    created_at: it.created_at,
+                    items: [],
+                    total: 0,
+                    count: 0,
+                    general_discount: null
+                };
+                order.push(invId);
+            }
+            var g = map[invId];
+            g.items.push(it);
+            g.total += Number(it.line_total) || 0;
+            g.count++;
+            // invoice_no — null degilse ilk goren yazsin (tum satirlar ayni numara)
+            if (g.invoice_no == null && it.invoice_no != null) {
+                g.invoice_no = Number(it.invoice_no);
+            }
+            // en eski (ilk) created_at'ı header tarihi olarak tut
+            if (it.created_at && (!g.created_at || new Date(it.created_at) < new Date(g.created_at))) {
+                g.created_at = it.created_at;
+            }
+            // metadata öncelik: doluysa güncelle
+            if (!g.supplier && meta.supplier) g.supplier = meta.supplier;
+            if (!g.description && meta.description) g.description = meta.description;
+            // Genel iskonto — önce kolonlardan oku, yoksa legacy note fallback
+            if (!g.general_discount) {
+                var colAmt = Number(it.general_discount_amount);
+                if (Number.isFinite(colAmt) && colAmt > 0) {
+                    g.general_discount = {
+                        type: it.general_discount_type === 'percent' ? 'percent' : 'amount',
+                        value: colAmt
+                    };
+                } else if (meta.general_discount && Number(meta.general_discount.value) > 0) {
+                    g.general_discount = {
+                        type: meta.general_discount.type === 'percent' ? 'percent' : 'amount',
+                        value: Number(meta.general_discount.value) || 0
+                    };
+                }
+            }
+        });
+
+        // Genel iskontoyu net_total'a yansıt — liste için (puRecalcAll mantığıyla aynı)
+        order.forEach(function (k) {
+            var g = map[k];
+            // Her satırın netPost'unu yeniden çıkar (line_total = q*u*(1-d/100)*(1+v/100))
+            var sumNetPost = 0;
+            var rows = [];
+            (g.items || []).forEach(function (it) {
+                var q = Number(it.quantity) || 0;
+                var u = Number(it.unit_cost) || 0;
+                var v = Number(it.vat_rate) || 0;
+                var d = Number(it.discount_rate) || 0;
+                if (d < 0) d = 0; if (d > 100) d = 100;
+                var rowNetPost = q * u * (1 - d / 100);
+                sumNetPost += rowNetPost;
+                rows.push({ rowNetPost: rowNetPost, v: v });
+            });
+
+            var gdVal = (g.general_discount && Number(g.general_discount.value)) || 0;
+            var gdType = g.general_discount && g.general_discount.type === 'percent' ? 'percent' : 'amount';
+            var gdAmt = 0;
+            if (gdVal > 0 && sumNetPost > 0) {
+                gdAmt = (gdType === 'percent')
+                    ? sumNetPost * (Math.max(0, Math.min(100, gdVal)) / 100)
+                    : gdVal;
+                if (gdAmt > sumNetPost) gdAmt = sumNetPost;
+                if (gdAmt < 0) gdAmt = 0;
+            }
+
+            var finalNet = sumNetPost - gdAmt;
+            var factor = sumNetPost > 0 ? (finalNet / sumNetPost) : 0;
+            var vatTotal = 0;
+            rows.forEach(function (r) {
+                var lineFinalNet = r.rowNetPost * factor;
+                var lineVat = lineFinalNet * (r.v / 100);
+                if (lineVat < 0) lineVat = 0;
+                vatTotal += lineVat;
+            });
+
+            g.net_total = Math.max(0, finalNet + vatTotal);
+        });
+
+        // Yeni fatura en üstte
+        return order.map(function (k) { return map[k]; }).sort(function (a, b) {
+            return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        });
+    },
+
+    puLoadRecent: async function () {
+        var tbody = document.getElementById('puTableBody');
+        if (!tbody) return;
+
+        try {
+            var client = window.SupabaseService && typeof window.SupabaseService.getClient === 'function'
+                ? window.SupabaseService.getClient() : null;
+            if (!client) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:24px; color:#dc2626;">Client yüklenemedi.</td></tr>';
+                return;
+            }
+
+            // Tarih + pagination — RPC ile sunucu tarafi
+            var f = (this.purchaseState && this.purchaseState.recentFilter) || {};
+            var startDate = f.startDate || null;
+            var endDate   = f.endDate   || null;
+            var page      = Number(f.page) > 0 ? Number(f.page) : 1;
+            var pageSize  = Number(f.pageSize) > 0 ? Number(f.pageSize) : 20;
+            var offset    = (page - 1) * pageSize;
+
+            var resp = await client.rpc('get_purchase_invoices_paginated', {
+                p_start:  startDate,
+                p_end:    endDate,
+                p_limit:  pageSize,
+                p_offset: offset
+            });
+
+            if (!this._isActive) return;
+
+            if (resp.error) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:24px; color:#dc2626;">' + this.escapeHtml(resp.error.message || 'Hata') + '</td></tr>';
+                return;
+            }
+
+            this.purchaseState.purchasesAll = Array.isArray(resp.data) ? resp.data : [];
+            this.purchaseState.recentFilter.page = page;
+            this.puRenderTable();
+        } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
+        }
+    },
+
+    puApplyRecentFilter: function () {
+        var s = document.getElementById('puFilterStart');
+        var e = document.getElementById('puFilterEnd');
+        this.purchaseState.recentFilter.startDate = s ? s.value : '';
+        this.purchaseState.recentFilter.endDate   = e ? e.value : '';
+        this.purchaseState.recentFilter.page = 1;
+        this.puRenderTable();
+    },
+
+    puClearRecentFilter: function () {
+        var s = document.getElementById('puFilterStart');
+        var e = document.getElementById('puFilterEnd');
+        if (s) s.value = '';
+        if (e) e.value = '';
+        this.purchaseState.recentFilter.startDate = '';
+        this.purchaseState.recentFilter.endDate = '';
+        this.purchaseState.recentFilter.page = 1;
+        this.puRenderTable();
+    },
+
+    puSetRecentPage: function (n) {
+        this.purchaseState.recentFilter.page = Math.max(1, Number(n) || 1);
+        this.puRenderTable();
+    },
+
+    _puFilterRecent: function () {
+        // Önce itemları fatura bazında grupla, sonra faturaya göre tarih filtrele
+        var all = this.purchaseState.purchasesAll || [];
+        var invoices = this._puGroupByInvoice(all);
+
+        var f = this.purchaseState.recentFilter || {};
+        var startTs = f.startDate ? new Date(f.startDate + 'T00:00:00').getTime() : null;
+        var endTs   = f.endDate   ? new Date(f.endDate   + 'T23:59:59').getTime() : null;
+
+        return invoices.filter(function (inv) {
+            if (!inv.created_at) return true;
+            var t = new Date(inv.created_at).getTime();
+            if (startTs !== null && t < startTs) return false;
+            if (endTs   !== null && t > endTs)   return false;
+            return true;
+        });
+    },
+
+    formatInvoiceNo: function (no) {
+        if (no == null || no === '') return '—';
+        var n = Number(no);
+        if (!Number.isFinite(n)) return String(no);
+        return String(Math.floor(n)).padStart(12, '0');
+    },
+
+    puRenderTable: function () {
+        var tbody = document.getElementById('puTableBody');
+        if (!tbody) return;
+
+        // Invoice-bazli kolonlar (RPC: get_purchase_invoices_paginated)
+        var thead = tbody.parentNode ? tbody.parentNode.querySelector('thead') : null;
+        if (thead) {
+            thead.innerHTML = '<tr>' +
+                '<th style="white-space:nowrap; width:160px;">No</th>' +
+                '<th style="white-space:nowrap; width:140px;">Tarih</th>' +
+                '<th style="text-align:right; width:100px;">Kalem</th>' +
+                '<th style="text-align:right;">Toplam</th>' +
+                '<th style="width:120px; text-align:right;">İşlem</th>' +
+            '</tr>';
+        }
+
+        // RPC sonucunu dogrudan kullan (server-side pagination)
+        var invoices = Array.isArray(this.purchaseState.purchasesAll)
+            ? this.purchaseState.purchasesAll : [];
+
+        var f = this.purchaseState.recentFilter || {};
+        var pageSize = f.pageSize || 20;
+        var page = f.page || 1;
+        var totalCount = (invoices[0] && invoices[0].total_count != null)
+            ? Number(invoices[0].total_count)
+            : invoices.length;
+        var totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+        this.purchaseState.purchases = invoices;
+
+        var countEl = document.getElementById('puRecentCount');
+        if (countEl) {
+            countEl.textContent = totalCount
+                ? (totalCount + ' fatura • Sayfa ' + page + ' / ' + totalPages)
+                : '0 fatura';
+        }
+
+        if (!invoices.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:#64748b;">Kayıt bulunamadı.</td></tr>';
+            this._puRenderPagination(totalPages);
+            return;
+        }
+
+        var self = this;
+        tbody.innerHTML = invoices.map(function (inv) {
+            // Tarih: invoice_date ONCELIKLI; yoksa created_at fallback
+            var rawDate = inv.invoice_date || inv.created_at;
+            var d = rawDate ? new Date(rawDate) : null;
+            var dateStr = d ? d.toLocaleDateString('tr-TR') : '-';
+
+            var invNoText = (inv.invoice_no != null)
+                ? self.formatInvoiceNo(inv.invoice_no)
+                : '—';
+
+            var itemCount = (inv.item_count != null) ? Number(inv.item_count) : (inv.count || 0);
+            var totalAmount = (inv.total_amount != null) ? Number(inv.total_amount)
+                            : (inv.net_total != null ? Number(inv.net_total)
+                            : (inv.total != null ? Number(inv.total) : 0));
+
+            // Detay butonu icin invoice_no'yu data attribute olarak gec
+            var invNoSafe = self.escapeHtml(String(inv.invoice_no != null ? inv.invoice_no : ''));
+
+            return '<tr>' +
+                '<td style="white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; font-weight:700; color:#0f172a; letter-spacing:0.02em;">' +
+                    '<span style="color:#94a3b8; font-weight:600; margin-right:4px;">No:</span>' +
+                    self.escapeHtml(invNoText) +
+                '</td>' +
+                '<td style="white-space:nowrap;">' + self.escapeHtml(dateStr) + '</td>' +
+                '<td style="text-align:right; font-weight:700;">' + itemCount + '</td>' +
+                '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(totalAmount) + '</td>' +
+                '<td style="text-align:right; white-space:nowrap;">' +
+                    '<button class="btn btn-secondary" style="padding:5px 11px; font-size:12px;" onclick="window.ProductsView.puShowInvoiceDetail(\'' + invNoSafe + '\')">Detay</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+
+        this._puRenderPagination(totalPages);
+    },
+
+    /* ============================================================
+       INVOICE DETAIL — Detay butonu
+       Tek invoice_no icin purchase_items satirlarini cek + modal goster
+       ============================================================ */
+    puShowInvoiceDetail: async function (invoiceNo) {
+        if (!invoiceNo) return;
+
+        var client = window.SupabaseService && typeof window.SupabaseService.getClient === 'function'
+            ? window.SupabaseService.getClient() : null;
+        if (!client) {
+            this.puSetStatus('Client yüklenemedi.', 'error');
+            return;
+        }
+
+        var resp = await client
+            .from('purchase_items')
+            .select('id,quantity,unit,unit_cost,line_total,vat_rate,discount_rate,invoice_no,invoice_date,note,raw_material:raw_materials(id,name,unit)')
+            .eq('invoice_no', Number(invoiceNo))
+            .eq('is_deleted', false)
+            .order('created_at', { ascending: true });
+
+        if (resp.error) {
+            this.puSetStatus(this.getErrorMessage(resp.error, 'Detay yüklenemedi.'), 'error');
+            return;
+        }
+
+        var rows = Array.isArray(resp.data) ? resp.data : [];
+
+        // Mevcut modal varsa kullan, yoksa basit overlay yarat
+        var modal = document.getElementById('puViewModal');
+        var body  = document.getElementById('puViewBody');
+
+        if (modal && body) {
+            // Mevcut puViewModal'i invoice_no detayi ile doldur
+            var self = this;
+            var headerInfo = (rows[0] && rows[0].invoice_date)
+                ? new Date(rows[0].invoice_date).toLocaleDateString('tr-TR')
+                : '-';
+
+            // Genel Toplam — tum satirlarin line_total toplami
+            var grandTotal = rows.reduce(function (sum, r) {
+                return sum + (Number(r.line_total) || 0);
+            }, 0);
+
+            body.innerHTML =
+                '<div style="margin-bottom:14px; padding:12px 14px; background:#f8fafc; border-radius:10px; font-size:13px; color:#475569;">' +
+                    '<div style="font-weight:700; color:#0f172a; font-family:ui-monospace,Consolas,monospace;">No: ' + this.escapeHtml(this.formatInvoiceNo(invoiceNo)) + '</div>' +
+                    '<div style="margin-top:4px;">Tarih: ' + this.escapeHtml(headerInfo) + ' • ' + rows.length + ' kalem</div>' +
+                '</div>' +
+                '<table class="data-table" style="margin:0;"><thead><tr>' +
+                    '<th>Ham Madde</th>' +
+                    '<th style="text-align:right;">Miktar</th>' +
+                    '<th style="text-align:right;">Birim Fiyat</th>' +
+                    '<th style="text-align:right;">% İsk</th>' +
+                    '<th style="text-align:right;">KDV</th>' +
+                    '<th style="text-align:right;">Toplam</th>' +
+                '</tr></thead><tbody>' +
+                rows.map(function (r) {
+                    var rm = r.raw_material || {};
+                    var name = self.escapeHtml(rm.name || '(Silinmiş)');
+                    var unit = self.escapeHtml(r.unit || rm.unit || '');
+                    return '<tr>' +
+                        '<td style="font-weight:600;">' + name + '</td>' +
+                        '<td style="text-align:right;">' + Number(r.quantity || 0) + (unit ? ' ' + unit : '') + '</td>' +
+                        '<td style="text-align:right;">' + self.formatMoney(r.unit_cost) + '</td>' +
+                        '<td style="text-align:right; color:#b45309;">' + (Number(r.discount_rate) || 0) + '%</td>' +
+                        '<td style="text-align:right; color:#6366f1;">%' + (Number(r.vat_rate) || 0) + '</td>' +
+                        '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(r.line_total) + '</td>' +
+                    '</tr>';
+                }).join('') +
+                '</tbody>' +
+                '<tfoot>' +
+                    '<tr style="background:#f8fafc; border-top:2px solid #0f172a;">' +
+                        '<td colspan="5" style="text-align:right; font-weight:800; color:#0f172a; padding:14px 12px; font-size:14px; letter-spacing:0.02em;">GENEL TOPLAM</td>' +
+                        '<td style="text-align:right; font-weight:800; color:#059669; padding:14px 12px; font-size:16px;">' + self.formatMoney(grandTotal) + '</td>' +
+                    '</tr>' +
+                '</tfoot>' +
+                '</table>';
+
+            modal.style.display = 'flex';
+            return;
+        }
+
+        // Modal element yoksa basit fallback
+        var msg = rows.length
+            ? rows.length + ' kalem bulundu (puViewModal element\'i yok — UI render edilemedi)'
+            : 'Bu fatura için kalem bulunamadı';
+        this.puSetStatus(msg, rows.length ? 'success' : 'error');
+    },
+
+    _puFindInvoice: function (invoiceId) {
+        var invoices = this._puGroupByInvoice(this.purchaseState.purchasesAll || []);
+        return invoices.find(function (inv) { return String(inv.invoice_id) === String(invoiceId); });
+    },
+
+    _puRenderPagination: function (totalPages) {
+        var wrap = document.getElementById('puPagination');
+        if (!wrap) return;
+        if (totalPages <= 1) { wrap.innerHTML = ''; return; }
+
+        var current = this.purchaseState.recentFilter.page || 1;
+        var html = '';
+
+        var btn = function (n, label, active, disabled) {
+            var bg = active ? '#0f172a' : '#fff';
+            var color = active ? '#fff' : (disabled ? '#cbd5e1' : '#0f172a');
+            var cursor = disabled ? 'default' : 'pointer';
+            return '<button type="button" ' + (disabled ? 'disabled ' : '') +
+                'onclick="window.ProductsView.puSetRecentPage(' + n + ')" ' +
+                'style="min-width:36px; padding:7px 12px; border:1px solid #e2e8f0; background:' + bg + '; color:' + color + '; border-radius:8px; font-size:13px; font-weight:600; cursor:' + cursor + ';">' +
+                label + '</button>';
+        };
+
+        html += btn(Math.max(1, current - 1), '‹', false, current === 1);
+
+        // Window of pages
+        var from = Math.max(1, current - 2);
+        var to   = Math.min(totalPages, from + 4);
+        from = Math.max(1, to - 4);
+        if (from > 1) {
+            html += btn(1, '1', current === 1, false);
+            if (from > 2) html += '<span style="padding:7px 4px; color:#94a3b8;">…</span>';
+        }
+        for (var p = from; p <= to; p++) {
+            html += btn(p, String(p), current === p, false);
+        }
+        if (to < totalPages) {
+            if (to < totalPages - 1) html += '<span style="padding:7px 4px; color:#94a3b8;">…</span>';
+            html += btn(totalPages, String(totalPages), current === totalPages, false);
+        }
+
+        html += btn(Math.min(totalPages, current + 1), '›', false, current === totalPages);
+
+        wrap.innerHTML = html;
+    },
+
+    puViewItem: function (invoiceId) {
+        var inv = this._puFindInvoice(invoiceId);
+        if (!inv) return;
+
+        var body = document.getElementById('puViewBody');
+        var modal = document.getElementById('puViewModal');
+        if (!body || !modal) return;
+
+        var d = inv.created_at ? new Date(inv.created_at) : null;
+        var dateStr = d ? d.toLocaleString('tr-TR') : '-';
+        var supplier = inv.supplier || '-';
+        var desc = inv.description || '-';
+
+        var self = this;
+        // İki geçişli hesap (puRecalcAll mantığının aynası):
+        //  1) per-row netPre, netPost(=q*u*(1-d/100)), satır iskonto, sumNetPost
+        //  2) genel iskontoyu tüm satırlara orantılı dağıt → finalNet, vat = finalNet * v/100
+        var rowsCalc = [];
+        var netSum = 0;          // Σ rowNetPre (iskonto öncesi)
+        var discountSum = 0;     // Σ satır iskonto
+        var sumNetPost = 0;      // Σ rowNetPost (satır iskonto sonrası, KDV öncesi)
+
+        (inv.items || []).forEach(function (it) {
+            var rmName = (it.raw_material && it.raw_material.name) ? it.raw_material.name : '(silinmiş)';
+            var q = Number(it.quantity) || 0;
+            var u = Number(it.unit_cost) || 0;
+            var v = Number(it.vat_rate) || 0;
+            var d = Number(it.discount_rate) || 0;
+            if (d < 0) d = 0; if (d > 100) d = 100;
+
+            var rowNetPre  = q * u;
+            var rowNetPost = rowNetPre * (1 - d / 100);
+            var rowDisc    = rowNetPre - rowNetPost;
+
+            netSum      += rowNetPre;
+            discountSum += rowDisc;
+            sumNetPost  += rowNetPost;
+
+            rowsCalc.push({ it: it, rmName: rmName, q: q, u: u, v: v, rowNetPost: rowNetPost });
+        });
+
+        // Genel iskonto — kolon (inv.general_discount) önceliğiyle, sumNetPost üzerinden hesaplanır
+        var gd = inv.general_discount || null;
+        var gdAmtCalc = 0;
+        if (gd && Number(gd.value) > 0 && sumNetPost > 0) {
+            if (gd.type === 'percent') {
+                var gp = Math.max(0, Math.min(100, Number(gd.value) || 0));
+                gdAmtCalc = sumNetPost * (gp / 100);
+            } else {
+                gdAmtCalc = Number(gd.value) || 0;
+            }
+            if (gdAmtCalc > sumNetPost) gdAmtCalc = sumNetPost;
+            if (gdAmtCalc < 0) gdAmtCalc = 0;
+        }
+
+        // Orantılı dağıtım faktörü
+        var finalNet = sumNetPost - gdAmtCalc;
+        var factor = sumNetPost > 0 ? (finalNet / sumNetPost) : 0;
+
+        // Satır KDV'leri — finalNet üzerinden, daima >= 0
+        var vatSum = 0;
+        var grossSum = 0;
+        var itemsHtml = rowsCalc.map(function (rc) {
+            var lineFinalNet = rc.rowNetPost * factor;
+            var lineVat = lineFinalNet * (rc.v / 100);
+            if (lineVat < 0) lineVat = 0;
+            var lineGross = lineFinalNet + lineVat;
+            vatSum   += lineVat;
+            grossSum += lineGross;
+
+            return '<tr>' +
+                '<td style="padding:8px 10px; border-bottom:1px solid #f1f5f9;">' + self.escapeHtml('HM - ' + rc.rmName) + '</td>' +
+                '<td style="padding:8px 10px; text-align:right; border-bottom:1px solid #f1f5f9; white-space:nowrap;">' + self.formatNumber(rc.q) + ' ' + self.escapeHtml(rc.it.unit || '') + '</td>' +
+                '<td style="padding:8px 10px; text-align:right; border-bottom:1px solid #f1f5f9;">' + self.formatMoney(rc.u) + '</td>' +
+                '<td style="padding:8px 10px; text-align:right; border-bottom:1px solid #f1f5f9;">%' + self.formatNumber(rc.v) + '</td>' +
+                '<td style="padding:8px 10px; text-align:right; border-bottom:1px solid #f1f5f9; font-weight:700; color:#059669;">' + self.formatMoney(lineGross) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        if (vatSum < 0) vatSum = 0;
+        var vatTotal = vatSum;
+        var grandFinal = grossSum;  // = finalNet + vatSum
+
+        var row = function (label, val) {
+            return '<div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #f1f5f9;">' +
+                '<span style="color:#64748b; font-size:13px;">' + label + '</span>' +
+                '<span style="font-weight:600; color:#0f172a; font-size:14px;">' + val + '</span>' +
+                '</div>';
+        };
+
+        body.innerHTML =
+            '<div style="margin-bottom:14px;">' +
+                row('Tarih', this.escapeHtml(dateStr)) +
+                row('Firma', this.escapeHtml(supplier)) +
+                row('Açıklama', this.escapeHtml(desc)) +
+                row('Kalem Sayısı', String(inv.count)) +
+            '</div>' +
+            '<div style="margin-top:16px;">' +
+                '<div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; margin-bottom:8px;">SATIRLAR</div>' +
+                '<div style="border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">' +
+                '<table style="width:100%; border-collapse:collapse; font-size:13px;">' +
+                    '<thead><tr style="background:#f8fafc;">' +
+                        '<th style="padding:8px 10px; text-align:left; font-size:11px; color:#64748b; letter-spacing:0.04em;">HAM MADDE</th>' +
+                        '<th style="padding:8px 10px; text-align:right; font-size:11px; color:#64748b; letter-spacing:0.04em;">MİKTAR</th>' +
+                        '<th style="padding:8px 10px; text-align:right; font-size:11px; color:#64748b; letter-spacing:0.04em;">BİRİM (NET)</th>' +
+                        '<th style="padding:8px 10px; text-align:right; font-size:11px; color:#64748b; letter-spacing:0.04em;">KDV</th>' +
+                        '<th style="padding:8px 10px; text-align:right; font-size:11px; color:#64748b; letter-spacing:0.04em;">TOPLAM</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + itemsHtml + '</tbody>' +
+                '</table>' +
+                '</div>' +
+            '</div>' +
+            '<div style="margin-top:16px; padding:14px 16px; background:linear-gradient(135deg,#f8fafc,#f1f5f9); border-radius:12px; border:1px solid #e2e8f0;">' +
+                '<div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; margin-bottom:8px;">TOPLAMLAR</div>' +
+                row('Ara Toplam (net)', this.formatMoney(netSum)) +
+                (discountSum > 0
+                    ? '<div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #f1f5f9;">' +
+                          '<span style="color:#64748b; font-size:13px;">Satır İskontoları</span>' +
+                          '<span style="font-weight:700; color:#dc2626; font-size:14px;">-' + this.formatMoney(discountSum) + '</span>' +
+                      '</div>'
+                    : '') +
+                (gd && gdAmtCalc > 0
+                    ? '<div style="display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #f1f5f9;">' +
+                          '<span style="color:#64748b; font-size:13px;">Genel İskonto' +
+                              (gd.type === 'percent' ? ' (%' + this.formatNumber(Number(gd.value) || 0) + ')' : '') +
+                          '</span>' +
+                          '<span style="font-weight:700; color:#dc2626; font-size:14px;">-' + this.formatMoney(gdAmtCalc) + '</span>' +
+                      '</div>'
+                    : '') +
+                row('KDV Tutarı', '+' + this.formatMoney(vatTotal)) +
+                '<div style="display:flex; justify-content:space-between; padding:10px 0 0 0; margin-top:4px; border-top:2px solid #0f172a;">' +
+                    '<span style="font-size:15px; font-weight:800; color:#0f172a;">Genel Toplam</span>' +
+                    '<span style="font-size:17px; font-weight:800; color:#059669;">' + this.formatMoney(grandFinal) + '</span>' +
+                '</div>' +
+            '</div>';
+
+        modal.style.display = 'flex';
+    },
+
+    puCloseView: function () {
+        var modal = document.getElementById('puViewModal');
+        if (modal) modal.style.display = 'none';
+    },
+
+    puEditItem: function (invoiceId) {
+        var inv = this._puFindInvoice(invoiceId);
+        if (!inv || !inv.items || !inv.items.length) return;
+
+        // State reset
+        this.purchaseState.editingInvoiceId = inv.is_legacy ? null : inv.invoice_id;
+        this.purchaseState.editingOriginalIds = inv.items.map(function (it) { return it.id; });
+        this.purchaseState.lines = [];
+        this._puLineKey = (this._puLineKey || 1);
+
+        // KDV hariç moda zorla (unit_cost = net)
+        this.purchaseState.vatIncluded = false;
+
+        // Supplier & description restore
+        this.purchaseState.supplierName = inv.supplier || '';
+        this.purchaseState.description = inv.description || '';
+        var sEl = document.getElementById('puSupplier');
+        var dEl = document.getElementById('puDescription');
+        if (sEl) sEl.value = this.purchaseState.supplierName;
+        if (dEl) dEl.value = this.purchaseState.description;
+
+        // Tarih restore — created_at'tan YYYY-MM-DD
+        var dateEl = document.getElementById('puDate');
+        if (dateEl) {
+            if (inv.created_at) {
+                dateEl.value = String(inv.created_at).slice(0, 10);
+            } else {
+                dateEl.value = new Date().toISOString().slice(0, 10);
+            }
+        }
+
+        // Genel iskonto restore — öncelik: kolonlar (group), fallback: note (legacy)
+        var firstItem = (inv.items && inv.items.length) ? inv.items[0] : null;
+        var gdRestored = null;
+        if (inv.general_discount && Number(inv.general_discount.value) > 0) {
+            gdRestored = {
+                type: inv.general_discount.type === 'percent' ? 'percent' : 'amount',
+                value: Number(inv.general_discount.value) || 0
+            };
+        } else if (firstItem) {
+            var colAmt = Number(firstItem.general_discount_amount);
+            if (Number.isFinite(colAmt) && colAmt > 0) {
+                gdRestored = {
+                    type: firstItem.general_discount_type === 'percent' ? 'percent' : 'amount',
+                    value: colAmt
+                };
+            } else {
+                var meta = this._puParseNote(firstItem.note);
+                if (meta && meta.general_discount && Number(meta.general_discount.value) > 0) {
+                    gdRestored = {
+                        type: meta.general_discount.type === 'percent' ? 'percent' : 'amount',
+                        value: Number(meta.general_discount.value) || 0
+                    };
+                }
+            }
+        }
+        this.purchaseState.generalDiscount = gdRestored || { type: 'amount', value: 0 };
+        var gdtEl = document.getElementById('puGenDiscType');
+        var gdvEl = document.getElementById('puGenDiscValue');
+        if (gdtEl) gdtEl.value = this.purchaseState.generalDiscount.type;
+        if (gdvEl) gdvEl.value = this.purchaseState.generalDiscount.value > 0
+            ? String(this.purchaseState.generalDiscount.value) : '';
+
+        // Tüm itemları satır olarak yükle
+        var self = this;
+        inv.items.forEach(function (it) {
+            var k = self._puLineKey++;
+            var q = Number(it.quantity) || 0;
+            var u = Number(it.unit_cost) || 0;
+            var v = Number(it.vat_rate) || 0;
+            var d = Number(it.discount_rate) || 0;
+            var rm = it.raw_material || {};
+
+            // unit_cost DB'de NET (KDV haric, iskonto sonrasi netUnit degil; eski mantikla netUnit'tir)
+            // Yeni mantik: u DB'de q*u*(1-d/100)*(1+v/100) = line_total iliskisini tutar
+            // Edit modunda mode=excluded, lastEdited=unit, total = q*u*(1-d/100)*(1+v/100)
+            var dMul = 1 - (d / 100);
+            var vMul = 1 + (v / 100);
+            var displayTotal = +(q * u * dMul * vMul).toFixed(2);
+
+            self.purchaseState.lines.push({
+                _k: k,
+                _originalId: it.id,
+                rmId: rm.id || null,
+                rmName: rm.name || '',
+                rmUnit: it.unit || rm.unit || '',
+                qty: q,
+                unitCost: u,
+                discount: d,
+                total: displayTotal,
+                vat: v,
+                _vatTouched: true,  // edit modunda VAT zaten kayitli, override etme
+                lastEdited: 'unit',
+                search: '',
+                dropdownOpen: false
+            });
+        });
+
+        var btn = document.getElementById('puSaveAllBtn');
+        if (btn) btn.textContent = 'Faturayı Güncelle';
+
+        this.puSetVatMode(false);
+        this.puRenderLines();
+
+        try {
+            var form = document.getElementById('puLinesWrap');
+            if (form && form.scrollIntoView) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {}
+
+        var msg = inv.is_legacy
+            ? 'Eski kayıt düzenleme — kaydedildiğinde yeni faturaya dönüşür.'
+            : 'Fatura düzenleme modu. Kaydederek güncelleyebilirsiniz.';
+        this.puSetStatus(msg, 'success');
+    },
+
+    /* ============================================================
+       MULTI-LINE INVOICE (ALIŞ)
+       ============================================================ */
+    puAddLine: function () {
+        var k = this._puLineKey++;
+        this.purchaseState.lines.push({
+            _k: k,
+            rmId: null,
+            rmName: '',
+            rmUnit: '',
+            qty: '',
+            unitCost: '',
+            discount: 0,        // satir bazli iskonto orani (%) — 0-100
+            total: '',          // editable display total (KDV dahil modda gross-after-disc, KDV hariç modda net-after-disc)
+            vat: 20,
+            _vatTouched: false, // kullanıcı manuel değiştirdiyse true
+            lastEdited: 'unit', // 'unit' | 'total' — hangi alan son değiştirildi
+            search: '',
+            dropdownOpen: false
+        });
+        this.puRenderLines();
+    },
+
+    puSetVatMode: function (included) {
+        this.purchaseState.vatIncluded = !!included;
+
+        var inc = document.getElementById('puVatModeIncl');
+        var exc = document.getElementById('puVatModeExcl');
+        var hdr = document.getElementById('puHdrUnit');
+
+        if (inc && exc) {
+            inc.style.background = included ? '#fff' : 'transparent';
+            inc.style.color = included ? '#0f172a' : '#cbd5e1';
+            exc.style.background = included ? 'transparent' : '#fff';
+            exc.style.color = included ? '#cbd5e1' : '#0f172a';
+        }
+        if (hdr) hdr.textContent = included ? 'BİRİM FİYAT (KDV DAHİL)' : 'BİRİM FİYAT (KDV HARİÇ)';
+
+        // Her satırda lastEdited'a göre yeniden hesapla
+        this.recalcPurchase();
+    },
+
+    puRemoveLine: function (k) {
+        this.purchaseState.lines = this.purchaseState.lines.filter(function (l) { return l._k !== k; });
+        if (!this.purchaseState.lines.length) {
+            this.puAddLine();
+        } else {
+            this.puRenderLines();
+        }
+    },
+
+    puRenderLines: function () {
+        var wrap = document.getElementById('puLinesWrap');
+        if (!wrap) return;
+
+        var self = this;
+        wrap.innerHTML = this.purchaseState.lines.map(function (l) {
+            var k = l._k;
+            var unit = l.rmUnit ? self.escapeHtml(l.rmUnit) : '';
+
+            var discVal = (l.discount === '' || l.discount == null) ? '' : Number(l.discount);
+            return '' +
+                '<div class="pu-line-row" data-k="' + k + '" style="position:relative; display:grid; grid-template-columns: 1.9fr 0.85fr 0.95fr 0.65fr 0.7fr 1.05fr 36px; gap:8px; padding:10px 12px; align-items:center; border-bottom:1px solid #f1f5f9;">' +
+                    '<div style="position:relative;">' +
+                        '<input type="text" class="form-input" placeholder="HM - ...  (ara)" autocomplete="off" ' +
+                            'oninput="window.ProductsView.puLineSearch(' + k + ', this.value)" ' +
+                            'onfocus="window.ProductsView.puLineOpenDropdown(' + k + ')" ' +
+                            'id="puLineSearch_' + k + '" ' +
+                            'style="font-size:14px;">' +
+                        '<div class="pu-line-dropdown" id="puLineDropdown_' + k + '" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:10px; box-shadow:0 10px 30px rgba(15,23,42,0.14); max-height:240px; overflow-y:auto; z-index:30; margin-top:4px;"></div>' +
+                    '</div>' +
+                    '<div style="display:flex; gap:4px; align-items:center;">' +
+                        '<input type="number" class="form-input" placeholder="0" step="0.0001" min="0" value="' + (l.qty || '') + '" oninput="window.ProductsView.handlePurchaseInput(' + k + ', \'qty\', this.value)" onblur="window.ProductsView.handlePurchaseBlur(' + k + ', \'qty\')" style="text-align:right; font-size:14px;">' +
+                        (unit ? '<span style="font-size:12px; color:#64748b; font-weight:600; min-width:30px;">' + unit + '</span>' : '') +
+                    '</div>' +
+                    '<input type="number" class="form-input" id="puLineUnit_' + k + '" placeholder="0.00" step="0.0001" min="0" value="' + (l.unitCost || '') + '" oninput="window.ProductsView.handlePurchaseInput(' + k + ', \'unit\', this.value)" onblur="window.ProductsView.handlePurchaseBlur(' + k + ', \'unit\')" style="text-align:right; font-size:14px;">' +
+                    '<input type="number" class="form-input" id="puLineDisc_' + k + '" placeholder="0" step="0.01" min="0" max="100" value="' + (discVal === 0 ? '' : discVal) + '" oninput="window.ProductsView.handlePurchaseInput(' + k + ', \'discount\', this.value)" onblur="window.ProductsView.handlePurchaseBlur(' + k + ', \'discount\')" title="Satır iskontosu (%)" style="text-align:right; font-size:14px; color:#b45309; background:#fffbeb;">' +
+                    '<select class="form-select" onchange="window.ProductsView.handlePurchaseInput(' + k + ', \'vat\', this.value)" style="font-size:14px;">' +
+                        '<option value="0"' + (Number(l.vat) === 0 ? ' selected' : '') + '>%0</option>' +
+                        '<option value="1"' + (Number(l.vat) === 1 ? ' selected' : '') + '>%1</option>' +
+                        '<option value="10"' + (Number(l.vat) === 10 ? ' selected' : '') + '>%10</option>' +
+                        '<option value="20"' + (Number(l.vat) === 20 ? ' selected' : '') + '>%20</option>' +
+                    '</select>' +
+                    '<input type="number" class="form-input" id="puLineTotal_' + k + '" placeholder="0.00" step="0.01" min="0" value="' + (l.total || '') + '" oninput="window.ProductsView.handlePurchaseInput(' + k + ', \'total\', this.value)" onblur="window.ProductsView.handlePurchaseBlur(' + k + ', \'total\')" style="text-align:right; font-size:14px; font-weight:700; color:#059669; background:#f0fdf4;">' +
+                    '<button type="button" onclick="window.ProductsView.puRemoveLine(' + k + ')" title="Satırı sil" style="border:none; background:transparent; color:#dc2626; cursor:pointer; font-size:18px; padding:4px 8px; border-radius:6px;" onmouseover="this.style.background=\'#fef2f2\'" onmouseout="this.style.background=\'transparent\'">×</button>' +
+                '</div>';
+        }).join('');
+
+        // Set search input values via DOM (avoid HTML injection)
+        this.purchaseState.lines.forEach(function (l) {
+            var el = document.getElementById('puLineSearch_' + l._k);
+            if (el) {
+                var dn = l.rmId ? ('HM - ' + (l.rmName || '')) : (l.search || '');
+                el.value = dn;
+            }
+        });
+
+        this.puRecalcAll();
+    },
+
+    puLineEdit: function (k, field, value) {
+        // Field alias: UI "unit" gönderiyor, state "unitCost" kullaniyor
+        var stateField = (field === 'unit') ? 'unitCost' : field;
+
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+        line[stateField] = value;
+
+        var q = parseFloat(line.qty) || 0;
+        var u = parseFloat(line.unitCost) || 0;
+        var t = parseFloat(line.total) || 0;
+
+        // ---------- BIDIRECTIONAL HESAP ----------
+        if (stateField === 'qty' || stateField === 'unitCost') {
+            line.lastEdited = 'unit';
+            if (q > 0 && u > 0) {
+                line.total = +(q * u).toFixed(2);
+            } else {
+                line.total = '';
+            }
+        } else if (stateField === 'total') {
+            line.lastEdited = 'total';
+            if (q > 0 && t > 0) {
+                line.unitCost = +(t / q).toFixed(4);
+            } else {
+                line.unitCost = '';
+            }
+        } else if (stateField === 'vat') {
+            if (line.lastEdited === 'total' && q > 0 && t > 0) {
+                line.unitCost = +(t / q).toFixed(4);
+            } else if (q > 0 && u > 0) {
+                line.total = +(q * u).toFixed(2);
+            }
+        }
+
+        // ---------- DOM UPDATE (focus kaybı olmasın) ----------
+        var uEl = document.getElementById('puLineUnit_' + k);
+        var tEl = document.getElementById('puLineTotal_' + k);
+        if (uEl && document.activeElement !== uEl) uEl.value = (line.unitCost === '' || line.unitCost == null) ? '' : line.unitCost;
+        if (tEl && document.activeElement !== tEl) tEl.value = (line.total === '' || line.total == null) ? '' : line.total;
+
+        if(window.__DEBUG__)console.log('LINE AFTER:', line);
+    },
+
+    // Satırların lastEdited'a göre yeniden hesaplanması + grand totals
+    recalcPurchase: function (lastEdited) {
+        if(window.__DEBUG__)console.log('RECALC:', lastEdited);
+
+        var self = this;
+        (this.purchaseState.lines || []).forEach(function (line) {
+            var k = line._k;
+            var mode = lastEdited || line.lastEdited || 'unit';
+            var q = parseFloat(line.qty) || 0;
+            var u = parseFloat(line.unitCost) || 0;
+            var t = parseFloat(line.total) || 0;
+
+            if (mode === 'unit' && q > 0 && u > 0) {
+                line.total = +(q * u).toFixed(2);
+            } else if (mode === 'total' && q > 0 && t > 0) {
+                line.unitCost = +(t / q).toFixed(4);
+            }
+
+            var uEl = document.getElementById('puLineUnit_' + k);
+            var tEl = document.getElementById('puLineTotal_' + k);
+            if (uEl && document.activeElement !== uEl) uEl.value = (line.unitCost === '' || line.unitCost == null) ? '' : line.unitCost;
+            if (tEl && document.activeElement !== tEl) tEl.value = (line.total === '' || line.total == null) ? '' : line.total;
+        });
+
+        this.puRecalcAll();
+    },
+
+    // Summary refresher (grand total card)
+    updatePurchaseSummary: function () {
+        this.puRecalcAll();
+    },
+
+    // ============================================================
+    // INPUT ZİNCİRİ (DEBOUNCED — input sırasında state override YOK)
+    // input → state write (anlık) → debounce(400ms) → compute + summary
+    // ============================================================
+    handlePurchaseInput: function (k, field, value) {
+        // 1) ANLIK STATE WRITE — kullanıcı yazdıkça state güncel, ama DOM'a dokunmuyoruz
+        var stateField = (field === 'unit') ? 'unitCost' : field;
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+
+        // discount: clamp 0..100, bos string -> 0
+        if (stateField === 'discount') {
+            var d = (value === '' || value == null) ? 0 : Number(value);
+            if (!Number.isFinite(d) || d < 0) d = 0;
+            if (d > 100) d = 100;
+            line.discount = d;
+        } else {
+            line[stateField] = value;
+        }
+
+        if (stateField === 'qty' || stateField === 'unitCost') {
+            line.lastEdited = 'unit';
+        } else if (stateField === 'total') {
+            line.lastEdited = 'total';
+        } else if (stateField === 'vat') {
+            // Kullanıcı KDV'yi manuel değiştirdi — bir sonraki HM seçiminde
+            // otomatik override etmesin.
+            line._vatTouched = true;
+        }
+        this.lastEdited = field;
+
+        // 2) DEBOUNCE — kullanıcı yazmayı kesince hesapla
+        var self = this;
+        if (this._puDebounceTimer) clearTimeout(this._puDebounceTimer);
+
+        // VAT select / discount input değişiminde anında hesapla
+        var delay = (field === 'vat' || field === 'discount') ? 0 : 400;
+
+        this._puDebounceTimer = setTimeout(function () {
+            self._puDebounceTimer = null;
+            self._puComputeLine(k, field);
+            self.recalcPurchase(field);
+            self.updatePurchaseSummary();
+        }, delay);
+    },
+
+    // Blur'da: debounce'u flush et
+    handlePurchaseBlur: function (k, field) {
+        if (this._puDebounceTimer) {
+            clearTimeout(this._puDebounceTimer);
+            this._puDebounceTimer = null;
+        }
+        this._puComputeLine(k, field);
+        this.recalcPurchase(field);
+        this.updatePurchaseSummary();
+    },
+
+    // ============================================================
+    // SATIR HESAP MOTORU (iskonto + KDV)
+    // ------------------------------------------------------------
+    //   brut    = quantity * unit_cost
+    //   iskonto = brut * (discount/100)
+    //   net     = brut - iskonto
+    //   kdv     = net * (vat/100)
+    //   total   = net + kdv  (display total — KDV dahil, iskonto sonrasi)
+    //
+    // VAT EXCLUDED MODU: u = NET pre-disc unit
+    //   total_display = q * u * (1-d) * (1+v)
+    //
+    // VAT INCLUDED MODU: u = GROSS pre-disc unit (KDV dahil)
+    //   total_display = q * u * (1-d)
+    //
+    // Bidirectional: kullanici total yazarsa unit geri hesaplanir.
+    //   excluded: u = total / (q * (1-d) * (1+v))
+    //   included: u = total / (q * (1-d))
+    // ============================================================
+    _puComputeLine: function (k, field) {
+        var stateField = (field === 'unit') ? 'unitCost' : field;
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+
+        var q = parseFloat(line.qty) || 0;
+        var u = parseFloat(line.unitCost) || 0;
+        var t = parseFloat(line.total) || 0;
+        var d = parseFloat(line.discount) || 0;
+        var v = parseFloat(line.vat) || 0;
+
+        var dMul = 1 - (d / 100);   // iskonto carpani
+        var vMul = 1 + (v / 100);   // kdv carpani
+        var vatIncluded = !!this.purchaseState.vatIncluded;
+
+        if (stateField === 'qty' || stateField === 'unitCost' || stateField === 'discount' || stateField === 'vat') {
+            // Total'i unit'ten hesapla (eger lastEdited 'total' ise ve sadece vat/disc degisti -> unit'i yeniden hesapla)
+            if (line.lastEdited === 'total' && stateField !== 'qty' && stateField !== 'unitCost' && q > 0 && t > 0) {
+                var denom = vatIncluded ? (q * dMul) : (q * dMul * vMul);
+                if (denom > 0) line.unitCost = +(t / denom).toFixed(4);
+            } else if (q > 0 && u > 0) {
+                var disp = vatIncluded ? (q * u * dMul) : (q * u * dMul * vMul);
+                line.total = +disp.toFixed(2);
+            } else {
+                line.total = '';
+            }
+        } else if (stateField === 'total') {
+            if (q > 0 && t > 0) {
+                var denom2 = vatIncluded ? (q * dMul) : (q * dMul * vMul);
+                if (denom2 > 0) line.unitCost = +(t / denom2).toFixed(4);
+            } else {
+                line.unitCost = '';
+            }
+        }
+
+        // DOM — sadece aktif olmayan paired input'a yaz (user typing'i override etme)
+        var uEl = document.getElementById('puLineUnit_' + k);
+        var tEl = document.getElementById('puLineTotal_' + k);
+        if (uEl && document.activeElement !== uEl) {
+            uEl.value = (line.unitCost === '' || line.unitCost == null) ? '' : line.unitCost;
+        }
+        if (tEl && document.activeElement !== tEl) {
+            tEl.value = (line.total === '' || line.total == null) ? '' : line.total;
+        }
+    },
+
+    // Firma & Açıklama setter'ları — state-only, recompute tetiklemez
+    puSetSupplier: function (v) {
+        this.purchaseState.supplierName = String(v || '');
+    },
+    puSetDescription: function (v) {
+        this.purchaseState.description = String(v || '');
+    },
+
+    puLineSearch: function (k, value) {
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+        line.search = String(value || '');
+
+        // if typed something different than selected, clear selection
+        if (line.rmId) {
+            var expected = 'HM - ' + (line.rmName || '');
+            if (value !== expected) {
+                line.rmId = null;
+                line.rmName = '';
+                line.rmUnit = '';
+            }
+        }
+
+        this.puLineRenderDropdown(k);
+        this.puLineOpenDropdown(k);
+    },
+
+    puLineOpenDropdown: function (k) {
+        this.puLineRenderDropdown(k);
+        var dd = document.getElementById('puLineDropdown_' + k);
+        if (dd) dd.style.display = 'block';
+    },
+
+    puLineRenderDropdown: function (k) {
+        var dd = document.getElementById('puLineDropdown_' + k);
+        if (!dd) return;
+
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+
+        var self = this;
+        var q = this.normalizeName(line.search || '');
+        var list = this.purchaseState.rawMaterials.filter(function (m) {
+            if (!q) return true;
+            return self.normalizeName(m.name || '').indexOf(q) !== -1;
+        }).slice(0, 30);
+
+        if (!list.length) {
+            dd.innerHTML = '<div style="padding:12px; text-align:center; color:#94a3b8; font-size:13px;">Ham madde bulunamadı.</div>';
+            return;
+        }
+
+        dd.innerHTML = list.map(function (m) {
+            var id = self.escapeHtml(m.id);
+            var name = self.escapeHtml(m.name || '');
+            var unit = self.escapeHtml(m.unit || '');
+            var cost = self.formatMoney(m.cost);
+            return '<div onclick="window.ProductsView.puLineSelect(' + k + ', \'' + id + '\')" ' +
+                'style="padding:10px 12px; cursor:pointer; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center; gap:10px;" ' +
+                'onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'transparent\'">' +
+                '<div><div style="font-weight:700; color:#0f172a; font-size:13px;">HM - ' + name + '</div>' +
+                '<div style="font-size:11px; color:#64748b;">Birim: ' + unit + ' • ' + cost + '</div></div>' +
+            '</div>';
+        }).join('');
+    },
+
+    puLineSelect: function (k, rmId) {
+        var line = this.purchaseState.lines.find(function (l) { return l._k === k; });
+        if (!line) return;
+        var m = this.purchaseState.rawMaterials.find(function (x) { return String(x.id) === String(rmId); });
+        if (!m) return;
+
+        line.rmId = m.id;
+        line.rmName = m.name || '';
+        line.rmUnit = m.unit || '';
+        if (!line.unitCost) line.unitCost = Number(m.cost) || '';
+
+        // ============================================================
+        // KDV OTOMATIK DOLDURMA
+        // ------------------------------------------------------------
+        // Kullanici manuel KDV degistirmediyse hammadde KDV'sini uygula.
+        // vat_rate string ('20.00') veya number olabilir; Number() ile coerce.
+        // null/NaN durumunda fallback 20.
+        // ============================================================
+        var rawVat = m.vat_rate;
+        var coerced = (rawVat == null || rawVat === '') ? NaN : Number(rawVat);
+        var hmVat = Number.isFinite(coerced) ? coerced : 20;
+
+        if (!line._vatTouched) {
+            line.vat = hmVat;
+            if(window.__DEBUG__)console.log('[puLineSelect] HM:', m.name, '| raw vat_rate:', rawVat, '| applied:', hmVat);
+        } else {
+            if(window.__DEBUG__)console.log('[puLineSelect] HM:', m.name, '| vat manuel degistirilmis, dokunulmadi. line.vat:', line.vat);
+        }
+
+        var dd = document.getElementById('puLineDropdown_' + k);
+        if (dd) dd.style.display = 'none';
+
+        // Tum satiri yeniden render et — select'in selected attribute'u line.vat ile
+        // birlikte yeniden olusturulur.
+        this.puRenderLines();
+
+        // GUVENCE: render sonrasi DOM'a direkt bind et (race condition'a karsi).
+        // Satirin SELECT elementini bul ve degerini line.vat'a esitle.
+        var row = document.querySelector('.pu-line-row[data-k="' + k + '"]');
+        if (row) {
+            var sel = row.querySelector('select.form-select');
+            if (sel && !line._vatTouched) {
+                sel.value = String(line.vat);
+            }
+        }
+    },
+
+    puRecalcAll: function () {
+        // ============================================================
+        // GENEL HESAP MOTORU (satir iskontosu + genel iskonto + KDV)
+        // ------------------------------------------------------------
+        // SATIR ICIN (her satirda):
+        //   netUnit    = u (excluded mode) | u/(1+v) (included mode)
+        //   brut_net   = q * netUnit
+        //   line_disc  = brut_net * (discount/100)
+        //   net_after  = brut_net - line_disc
+        //
+        // SUM:
+        //   sum_brut_net   = sum of q*netUnit
+        //   sum_line_disc  = sum of line_disc
+        //   sum_net_after  = sum_brut_net - sum_line_disc
+        //
+        // GENEL ISKONTO (KDV oncesi, satirlara orantili dagit):
+        //   percent: gen_disc_net = sum_net_after * (gd.value/100)
+        //   amount : gen_disc_net = min(gd.value, sum_net_after)
+        //   final_net_factor = (sum_net_after - gen_disc_net) / sum_net_after
+        //   per line: line_final_net = net_after * final_net_factor
+        //              line_vat = line_final_net * v
+        //              line_gross = line_final_net + line_vat
+        //
+        // SUM final:
+        //   final_net = sum_net_after - gen_disc_net
+        //   total_vat = sum of line_vat (after general discount applied)
+        //   grand     = final_net + total_vat
+        // ============================================================
+        var vatIncluded = !!this.purchaseState.vatIncluded;
+        var gd = this.purchaseState.generalDiscount || { type: 'amount', value: 0 };
+        var gdType = gd.type === 'percent' ? 'percent' : 'amount';
+        var gdValue = Number(gd.value) || 0;
+        if (gdValue < 0) gdValue = 0;
+
+        // 1. Satir bazli on-hesap
+        var lineCalcs = [];
+        var sumBrutNet = 0;
+        var sumLineDisc = 0;
+
+        (this.purchaseState.lines || []).forEach(function (l) {
+            var q = parseFloat(l.qty) || 0;
+            var u = parseFloat(l.unitCost) || 0;
+            var v = parseFloat(l.vat) || 0;
+            var d = parseFloat(l.discount) || 0;
+            if (q <= 0 || u <= 0) return;
+
+            var netUnit = vatIncluded ? (u / (1 + v / 100)) : u;
+            var brutNet = q * netUnit;
+            var lineDisc = brutNet * (d / 100);
+            var netAfter = brutNet - lineDisc;
+
+            sumBrutNet  += brutNet;
+            sumLineDisc += lineDisc;
+
+            lineCalcs.push({
+                vatRate: v,
+                netAfter: netAfter
+            });
+        });
+
+        var sumNetAfter = sumBrutNet - sumLineDisc;
+
+        // 2. Genel iskonto hesabi
+        var genDiscNet = 0;
+        if (sumNetAfter > 0) {
+            if (gdType === 'percent') {
+                var gp = Math.max(0, Math.min(100, gdValue));
+                genDiscNet = sumNetAfter * (gp / 100);
+            } else {
+                genDiscNet = Math.min(Math.max(0, gdValue), sumNetAfter);
+            }
+        }
+
+        // 3. Final net + KDV (genel iskonto orantili dagilim)
+        var finalNet = sumNetAfter - genDiscNet;
+        var factor = sumNetAfter > 0 ? (finalNet / sumNetAfter) : 0;
+
+        var totalVat = 0;
+        var vatByRate = {};
+
+        lineCalcs.forEach(function (lc) {
+            var lineFinalNet = lc.netAfter * factor;
+            var lineVat = lineFinalNet * (lc.vatRate / 100);
+            totalVat += lineVat;
+            if (!vatByRate[lc.vatRate]) vatByRate[lc.vatRate] = 0;
+            vatByRate[lc.vatRate] += lineVat;
+        });
+
+        var grand = finalNet + totalVat;
+
+        // 4. DOM update
+        var brutEl  = document.getElementById('puGrandBrut');
+        var lDscEl  = document.getElementById('puGrandLineDisc');
+        var gDscEl  = document.getElementById('puGrandGenDisc');
+        var netEl   = document.getElementById('puGrandNet');
+        var vatEl   = document.getElementById('puGrandVat');
+        var totalEl = document.getElementById('puGrandTotal');
+        var brEl    = document.getElementById('puVatBreakdown');
+
+        if (brutEl) brutEl.textContent = this.formatMoney(sumBrutNet);
+        if (lDscEl) lDscEl.textContent = '−' + this.formatMoney(sumLineDisc);
+        if (gDscEl) gDscEl.textContent = '−' + this.formatMoney(genDiscNet);
+        if (netEl)  netEl.textContent  = this.formatMoney(finalNet);
+        if (vatEl)  vatEl.textContent  = this.formatMoney(totalVat);
+        if (totalEl) totalEl.textContent = this.formatMoney(grand);
+
+        if (brEl) {
+            var self = this;
+            var rates = Object.keys(vatByRate).map(Number).sort(function (a, b) { return a - b; });
+            if (!rates.length) {
+                brEl.innerHTML = '';
+            } else {
+                brEl.innerHTML = rates.map(function (r) {
+                    return '<div style="display:flex; justify-content:space-between; padding:3px 0; font-size:13px; color:#64748b;">' +
+                        '<span>KDV %' + r + '</span>' +
+                        '<span>' + self.formatMoney(vatByRate[r]) + '</span>' +
+                    '</div>';
+                }).join('');
+            }
+        }
+    },
+
+    puClearAll: function () {
+        this.purchaseState.lines = [];
+        this.purchaseState.supplierName = '';
+        this.purchaseState.description = '';
+        this.purchaseState.generalDiscount = { type: 'amount', value: 0 };
+        this.purchaseState.editingItemId = null;
+        this.purchaseState.editingInvoiceId = null;
+        this.purchaseState.editingOriginalIds = [];
+        var sEl = document.getElementById('puSupplier');
+        var dEl = document.getElementById('puDescription');
+        var dateEl0 = document.getElementById('puDate');
+        if (sEl) sEl.value = '';
+        if (dEl) dEl.value = '';
+        if (dateEl0) dateEl0.value = new Date().toISOString().slice(0, 10);
+        var gdtEl = document.getElementById('puGenDiscType');
+        var gdvEl = document.getElementById('puGenDiscValue');
+        if (gdtEl) gdtEl.value = 'amount';
+        if (gdvEl) gdvEl.value = '';
+        var btn = document.getElementById('puSaveAllBtn');
+        if (btn) btn.textContent = 'Faturayı Kaydet';
+        this.puAddLine();
+        this.puSetStatus('', '');
+        var status = document.getElementById('puStatus');
+        if (status) status.innerHTML = '';
+    },
+
+    puSetGeneralDiscountType: function (type) {
+        if (type !== 'amount' && type !== 'percent') type = 'amount';
+        this.purchaseState.generalDiscount.type = type;
+        this.puRecalcAll();
+    },
+
+    puSetGeneralDiscountValue: function (value) {
+        var v = (value === '' || value == null) ? 0 : Number(value);
+        if (!Number.isFinite(v) || v < 0) v = 0;
+        var type = this.purchaseState.generalDiscount.type;
+        if (type === 'percent' && v > 100) v = 100;
+        this.purchaseState.generalDiscount.value = v;
+        this.puRecalcAll();
+    },
+
+    // ============================================================
+    // WAC HELPER — net maliyet faktörü (genel iskonto sonrası)
+    // ------------------------------------------------------------
+    // Her satırın rowNetPost = q * netUnit * (1 - d/100) değerini topla,
+    // genel iskontoyu sumNetPost üzerinden uygula, faktör döndür.
+    // base_unit_cost = (rowNetPost * factor) / q ile yazılır.
+    // ============================================================
+    _puComputeWacFactor: function (lines, vatIncluded) {
+        var sumNetPost = 0;
+        var rowsMeta = [];
+        (lines || []).forEach(function (l) {
+            var q = parseFloat(l.qty) || 0;
+            var u = parseFloat(l.unitCost) || 0;
+            var v = parseFloat(l.vat) || 0;
+            var d = parseFloat(l.discount) || 0;
+            if (!Number.isFinite(d) || d < 0) d = 0;
+            if (d > 100) d = 100;
+            if (q <= 0 || u <= 0) {
+                rowsMeta.push({ key: l._k, q: q, netUnit: 0, rowNetPost: 0 });
+                return;
+            }
+            var netUnit = vatIncluded ? (u / (1 + v / 100)) : u;
+            var rowNetPost = q * netUnit * (1 - d / 100);
+            sumNetPost += rowNetPost;
+            rowsMeta.push({ key: l._k, q: q, netUnit: netUnit, rowNetPost: rowNetPost });
+        });
+
+        var gd = this.purchaseState.generalDiscount || { type: 'amount', value: 0 };
+        var gdType = gd.type === 'percent' ? 'percent' : 'amount';
+        var gdValue = Number(gd.value) || 0;
+        if (gdValue < 0) gdValue = 0;
+
+        var gdAmt = 0;
+        if (sumNetPost > 0 && gdValue > 0) {
+            if (gdType === 'percent') {
+                var gp = Math.max(0, Math.min(100, gdValue));
+                gdAmt = sumNetPost * (gp / 100);
+            } else {
+                gdAmt = gdValue;
+            }
+            if (gdAmt > sumNetPost) gdAmt = sumNetPost;
+            if (gdAmt < 0) gdAmt = 0;
+        }
+
+        var finalNet = sumNetPost - gdAmt;
+        var factor = sumNetPost > 0 ? (finalNet / sumNetPost) : 0;
+        return { factor: factor, rowsMeta: rowsMeta };
+    },
+
+    puSaveAll: async function () {
+        // Re-entry guard: hızlı çift tık aynı faturayı 2 kez kaydetmesin
+        if (this._savingPurchase) return;
+        this._savingPurchase = true;
+        try {
+        if (this.purchaseState.saving) return;
+
+        // ====== UNIFIED INVOICE DATE ======
+        // Kullanicinin sectigi tarih invoice_date kolonuna yazilir (DATE).
+        // created_at DB tarafindan now() ile otomatik dolar — manuel
+        // gondermiyoruz (timezone kaymalarini onlemek icin).
+        var dateInput = document.getElementById('puDate');
+        var selectedDate = dateInput ? dateInput.value : '';
+        // date-only string (YYYY-MM-DD). Bos ise bugunun tarihi.
+        var invoiceDate = selectedDate
+            ? String(selectedDate).slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+
+        // Debounce'u flush et — pending compute varsa şimdi çalışsın
+        if (this._puDebounceTimer) {
+            clearTimeout(this._puDebounceTimer);
+            this._puDebounceTimer = null;
+            var self = this;
+            (this.purchaseState.lines || []).forEach(function (line) {
+                self._puComputeLine(line._k, line.lastEdited === 'total' ? 'total' : 'unit');
+            });
+            this.puRecalcAll();
+        }
+
+        // Geçerli satırları filtrele (hem insert hem edit için ortak)
+        var validLines = this.purchaseState.lines.filter(function (l) {
+            var q = parseFloat(l.qty);
+            var u = parseFloat(l.unitCost);
+            return l.rmId && Number.isFinite(q) && q > 0 && Number.isFinite(u) && u > 0;
+        });
+        var anyInvalid = this.purchaseState.lines.some(function (l) {
+            var hasAny = l.rmId || l.qty || l.unitCost;
+            if (!hasAny) return false;
+            var q = parseFloat(l.qty);
+            var u = parseFloat(l.unitCost);
+            return !l.rmId || !Number.isFinite(q) || q <= 0 || !Number.isFinite(u) || u <= 0;
+        });
+
+        // ====== HARD GUARD — VERİ KALİTESİ ======
+        // Boş satır / 0 miktar / 0 fiyat / hammadde seçilmemiş → hiç kayıt yapma
+        if (validLines.length === 0) {
+            try { alert('Geçerli satır yok. Her satırda ham madde, miktar (>0) ve birim fiyat (>0) gerekli.'); } catch (e) {}
+            this.puSetStatus('Geçerli satır yok.', 'error');
+            this._savingPurchase = false;
+            return;
+        }
+        if (anyInvalid) {
+            try { alert('Eksik/hatalı satır var. Boş satırları kaldırın veya ham madde + miktar + birim fiyat girin.'); } catch (e) {}
+            this.puSetStatus('Eksik/hatalı satır var. Her satırda ham madde, miktar ve birim fiyat gerekli.', 'error');
+            this._savingPurchase = false;
+            return;
+        }
+
+        // ====== EDIT MODE — INVOICE UPDATE (multi-line) ======
+        if (this.purchaseState.editingInvoiceId || (this.purchaseState.editingOriginalIds && this.purchaseState.editingOriginalIds.length)) {
+            if (anyInvalid) {
+                this.puSetStatus('Eksik/hatalı satır var. Her satırda ham madde, miktar ve birim fiyat gerekli.', 'error');
+                return;
+            }
+            if (!validLines.length) {
+                this.puSetStatus('En az bir geçerli satır gerekli.', 'error');
+                return;
+            }
+
+            var eBtn = document.getElementById('puSaveAllBtn');
+            this.purchaseState.saving = true;
+            if (eBtn) { eBtn.disabled = true; eBtn.textContent = 'Güncelleniyor...'; }
+
+            var editInvoiceId = this.purchaseState.editingInvoiceId || this._puMakeInvoiceId();
+            var editSupplier = this.purchaseState.supplierName || null;
+            var editDesc = this.purchaseState.description || null;
+            // Genel iskonto note'ta YAZILMAZ — kolon olarak gönderilir
+            var editNote = this._puMakeNote(editInvoiceId, editSupplier, editDesc, null);
+            var editGenDisc  = this.purchaseState.generalDiscount || { type: 'amount', value: 0 };
+            var editGdAmount = Number(editGenDisc.value) || 0;
+            var editGdType   = editGenDisc.type === 'percent' ? 'percent' : 'amount';
+            var originalIds = (this.purchaseState.editingOriginalIds || []).slice();
+
+            // Tenant resolve
+            var eTenantId = null;
+            try {
+                if (window.SupabaseService && typeof window.SupabaseService.getTenantId === 'function') {
+                    eTenantId = await window.SupabaseService.getTenantId();
+                }
+            } catch (e) { eTenantId = null; }
+            if (!eTenantId) {
+                this.purchaseState.saving = false;
+                if (eBtn) { eBtn.disabled = false; eBtn.textContent = 'Faturayı Güncelle'; }
+                this.puSetStatus('Tenant doğrulanamadı. Lütfen tekrar giriş yapın.', 'error');
+                return;
+            }
+
+            var eVatIncluded = !!this.purchaseState.vatIncluded;
+            var keepIds = [];
+            var eOk = 0, eFail = 0, eLastErr = null;
+
+            // YENI SATIRLAR ICIN BATCH KUYRUGU — tek atomic RPC ile gonderilir
+            var editNewItems = [];
+
+            // Tarih: fonksiyon başında tek seferlik hesaplanan invoiceDate kullanılır
+            var eCreatedAt = invoiceDate;
+
+            // WAC: genel iskonto sonrası net birim maliyet için faktör
+            var eWac = this._puComputeWacFactor(validLines, eVatIncluded);
+            var eFactor = eWac.factor;
+
+            // 1) Her satır: orijinal varsa UPDATE, yoksa BATCH KUYRUGU'na ekle
+            for (var ei = 0; ei < validLines.length; ei++) {
+                var el = validLines[ei];
+                var eq2 = parseFloat(el.qty);
+                var eu2 = parseFloat(el.unitCost);
+                var ev2 = parseFloat(el.vat) || 0;
+                var ed2 = parseFloat(el.discount) || 0;
+                if (!Number.isFinite(ed2) || ed2 < 0) ed2 = 0;
+                if (ed2 > 100) ed2 = 100;
+                var eVatMul2 = 1 + (ev2 / 100);
+                var eDMul2 = 1 - (ed2 / 100);
+                var eNetUnit2, eLineTotal2;
+                if (eVatIncluded) {
+                    eNetUnit2 = eu2 / eVatMul2;
+                    eLineTotal2 = eq2 * eu2 * eDMul2; // = eq2 * eNetUnit2 * eDMul2 * eVatMul2
+                } else {
+                    eNetUnit2 = eu2;
+                    eLineTotal2 = eq2 * eu2 * eDMul2 * eVatMul2;
+                }
+
+                // WAC: rowNetPost = eq2 * eNetUnit2 * eDMul2 ; rowFinalNet = rowNetPost * eFactor
+                // base_unit_cost = rowFinalNet / eq2 = eNetUnit2 * eDMul2 * eFactor
+                var eRowNetPost = eq2 * eNetUnit2 * eDMul2;
+                var eRowFinalNet = eRowNetPost * eFactor;
+                var eBaseUnitCost = eq2 > 0 ? (eRowFinalNet / eq2) : 0;
+                if (!Number.isFinite(eBaseUnitCost) || eBaseUnitCost < 0) eBaseUnitCost = 0;
+
+                try {
+                    if (el._originalId && originalIds.indexOf(el._originalId) !== -1) {
+                        const payload = {
+                            raw_material_id: el.rmId,
+
+                            quantity: Number(eq2),
+                            unit: el.rmUnit,
+
+                            unit_cost: Number(eNetUnit2),
+                            line_total: Number(eLineTotal2),
+                            vat_rate: Number(ev2),
+                            discount_rate: Number(ed2),
+
+                            base_quantity: Number(eq2),
+                            base_unit_cost: Number(eBaseUnitCost),
+
+                            general_discount_amount: Number(editGdAmount) || 0,
+                            general_discount_type: editGdType,
+
+                            note: editNote,
+                            invoice_date: eCreatedAt
+                        };
+
+                        // === FORCE NUMERIC ===
+                        payload.quantity        = Number(payload.quantity);
+                        payload.unit_cost       = Number(payload.unit_cost);
+                        payload.line_total      = Number(payload.line_total);
+                        payload.vat_rate        = Number(payload.vat_rate);
+                        payload.discount_rate   = Number(payload.discount_rate);
+                        payload.base_quantity   = Number(payload.base_quantity);
+                        payload.base_unit_cost  = Number(payload.base_unit_cost);
+                        payload.general_discount_amount = Number(payload.general_discount_amount) || 0;
+
+                        if (!Number.isFinite(payload.base_quantity) || payload.base_quantity <= 0 ||
+                            !Number.isFinite(payload.base_unit_cost) || payload.base_unit_cost < 0) {
+                            console.error('SAVE ABORT-ROW: base_* invalid (edit-update)', payload);
+                            eFail++;
+                            eLastErr = { message: 'WAC verisi geçersiz (base_quantity/base_unit_cost)' };
+                            continue;
+                        }
+
+
+                        // RPC-ONLY ile guncelle — REST fallback YOK
+                        // (REST UPDATE PostgREST schema cache stale ise invoice_date'i sessiz drop edebilir)
+                        var ures;
+                        try {
+                            var rpcCli = window.SupabaseService.getClient && window.SupabaseService.getClient();
+                            if (!rpcCli || typeof rpcCli.rpc !== 'function') {
+                                console.error('[UPDATE EDIT] RPC client bulunamadi — satir GUNCELLENMEDI', payload);
+                                ures = { data: null, error: { message: 'Supabase RPC client yok' } };
+                            } else {
+                                var rpcU = await rpcCli.rpc('update_purchase_item', {
+                                    p_id: el._originalId,
+                                    p_raw_material_id: payload.raw_material_id,
+                                    p_quantity: payload.quantity,
+                                    p_unit: payload.unit,
+                                    p_unit_cost: payload.unit_cost,
+                                    p_line_total: payload.line_total,
+                                    p_vat_rate: payload.vat_rate,
+                                    p_discount_rate: payload.discount_rate,
+                                    p_base_quantity: payload.base_quantity,
+                                    p_base_unit_cost: payload.base_unit_cost,
+                                    p_general_discount_amount: payload.general_discount_amount,
+                                    p_general_discount_type: payload.general_discount_type,
+                                    p_note: payload.note,
+                                    p_invoice_date: payload.invoice_date
+                                });
+                                if (rpcU && rpcU.error) {
+                                    console.error('[UPDATE EDIT] RPC FAIL — satir GUNCELLENMEDI', rpcU.error, payload);
+                                    ures = { data: null, error: rpcU.error };
+                                } else {
+                                    ures = { data: rpcU && rpcU.data, error: null };
+                                }
+                            }
+                        } catch (rpcErr) {
+                            console.error('[UPDATE EDIT] RPC THREW — satir GUNCELLENMEDI', rpcErr, payload);
+                            ures = { data: null, error: rpcErr };
+                        }
+                        if (ures && ures.error) { eFail++; eLastErr = ures.error; }
+                        else { eOk++; keepIds.push(el._originalId); }
+                    } else {
+                        // ============================================================
+                        // YENI SATIR — tek tek INSERT YOK. Batch kuyruguna eklenir.
+                        // (note JSON'da invoice_id mevcut; batch RPC ayni invoice_no'yu reuse eder)
+                        // ============================================================
+                        var newItem = {
+                            raw_material_id: el.rmId,
+                            quantity: Number(eq2),
+                            unit: el.rmUnit,
+                            unit_cost: Number(eNetUnit2),
+                            line_total: Number(eLineTotal2),
+                            vat_rate: Number(ev2),
+                            discount_rate: Number(ed2),
+                            base_quantity: Number(eq2),
+                            base_unit_cost: Number(eBaseUnitCost),
+                            general_discount_amount: Number(editGdAmount) || 0,
+                            general_discount_type: editGdType,
+                            note: editNote,
+                            invoice_date: eCreatedAt
+                        };
+
+                        // === FORCE NUMERIC ===
+                        newItem.quantity        = Number(newItem.quantity);
+                        newItem.unit_cost       = Number(newItem.unit_cost);
+                        newItem.line_total      = Number(newItem.line_total);
+                        newItem.vat_rate        = Number(newItem.vat_rate);
+                        newItem.discount_rate   = Number(newItem.discount_rate);
+                        newItem.base_quantity   = Number(newItem.base_quantity);
+                        newItem.base_unit_cost  = Number(newItem.base_unit_cost);
+                        newItem.general_discount_amount = Number(newItem.general_discount_amount) || 0;
+
+                        if (!Number.isFinite(newItem.base_quantity) || newItem.base_quantity <= 0 ||
+                            !Number.isFinite(newItem.base_unit_cost) || newItem.base_unit_cost < 0) {
+                            console.error('SAVE ABORT-ROW: base_* invalid (edit-new-line)', newItem);
+                            eFail++;
+                            eLastErr = { message: 'WAC verisi geçersiz (base_quantity/base_unit_cost)' };
+                            continue;
+                        }
+
+                        // Sadece kuyruga ekle — RPC asagida tek seferde calisacak
+                        editNewItems.push(newItem);
+                    }
+                } catch (err) {
+                    eFail++; eLastErr = err;
+                }
+            }
+
+            // ============================================================
+            // 1.5) BATCH INSERT — tum yeni satirlar TEK atomic RPC ile
+            // ============================================================
+            if (editNewItems.length > 0) {
+                try {
+                    var rpcCli2 = window.SupabaseService.getClient && window.SupabaseService.getClient();
+                    if (!rpcCli2 || typeof rpcCli2.rpc !== 'function') {
+                        console.error('[BATCH EDIT-NEW] RPC client bulunamadi — ' + editNewItems.length + ' YENI SATIR EKLENMEDI');
+                        eFail += editNewItems.length;
+                        eLastErr = { message: 'Supabase RPC client yok' };
+                    } else {
+                        if(window.__DEBUG__)console.log('[BATCH EDIT-NEW] RPC → insert_purchase_items_batch, satir:', editNewItems.length);
+                        var bRes = await rpcCli2.rpc('insert_purchase_items_batch', {
+                            p_items: editNewItems
+                        });
+                        if(window.__DEBUG__)console.log('[BATCH EDIT-NEW] RPC RESULT:', bRes);
+                        if (bRes && bRes.error) {
+                            console.error('[BATCH EDIT-NEW] RPC FAIL — TUM YENI SATIRLAR ROLLBACK', bRes.error);
+                            eFail += editNewItems.length;
+                            eLastErr = bRes.error;
+                        } else {
+                            var inserted = (bRes && bRes.data && Number(bRes.data.count)) || editNewItems.length;
+                            eOk += inserted;
+                            // Batch'in donen inserted_ids'lerini keepIds'e ekle (delete adimi
+                            // bunlari soft-delete ETMEMELI cunku yeni eklendiler)
+                            var insertedIds = (bRes && bRes.data && Array.isArray(bRes.data.inserted_ids))
+                                ? bRes.data.inserted_ids : [];
+                            for (var ii = 0; ii < insertedIds.length; ii++) {
+                                if (insertedIds[ii]) keepIds.push(insertedIds[ii]);
+                            }
+                        }
+                    }
+                } catch (rpcErr2) {
+                    console.error('[BATCH EDIT-NEW] RPC THREW — TUM YENI SATIRLAR ROLLBACK', rpcErr2);
+                    eFail += editNewItems.length;
+                    eLastErr = rpcErr2;
+                }
+            }
+
+            // 2) Silinmiş satırlar: orijinallerden keepIds dışında kalanları soft-delete
+            for (var di = 0; di < originalIds.length; di++) {
+                var origId = originalIds[di];
+                if (keepIds.indexOf(origId) === -1) {
+                    try {
+                        var dres = await window.SupabaseService.update('purchase_items', origId, { is_deleted: true });
+                        if (dres && dres.error) { eFail++; eLastErr = dres.error; }
+                    } catch (err2) { eFail++; eLastErr = err2; }
+                }
+            }
+
+            this.purchaseState.saving = false;
+            if (eBtn) { eBtn.disabled = false; eBtn.textContent = 'Faturayı Kaydet'; }
+
+            if (!this._isActive) return;
+
+            if (eFail > 0) {
+                this.puSetStatus(eOk + ' satır güncellendi, ' + eFail + ' hata. ' + this.getErrorMessage(eLastErr, ''), 'error');
+                if (eBtn) eBtn.textContent = 'Faturayı Güncelle';
+                return;
+            }
+
+            this.purchaseState.editingInvoiceId = null;
+            this.purchaseState.editingOriginalIds = [];
+            this.purchaseState.supplierName = '';
+            this.purchaseState.description = '';
+            this.purchaseState.generalDiscount = { type: 'amount', value: 0 };
+            var esEl = document.getElementById('puSupplier');
+            var edEl = document.getElementById('puDescription');
+            var egdtEl = document.getElementById('puGenDiscType');
+            var egdvEl = document.getElementById('puGenDiscValue');
+            var eDate2 = document.getElementById('puDate');
+            if (esEl) esEl.value = '';
+            if (edEl) edEl.value = '';
+            if (egdtEl) egdtEl.value = 'amount';
+            if (egdvEl) egdvEl.value = '';
+            if (eDate2) eDate2.value = new Date().toISOString().slice(0, 10);
+            this.purchaseState.lines = [];
+            this.puAddLine();
+            this.puSetStatus('Fatura güncellendi.', 'success');
+            await this.puLoadRecent();
+            window.dispatchEvent(new CustomEvent('products:updated'));
+            return;
+        }
+        // ====== /EDIT MODE ======
+
+        // INSERT path artık ortak validLines'ı kullanır (yukarıda hard-guard ile doğrulandı)
+        var lines = validLines;
+
+        this.purchaseState.saving = true;
+        var btn = document.getElementById('puSaveAllBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Kaydediliyor...'; }
+
+        var ok = 0, fail = 0, lastErr = null;
+
+        var vatIncluded = !!this.purchaseState.vatIncluded;
+
+        // RLS fix — tenant_id'yi backend'den resolve et ve her payload'a ekle
+        var tenantId = null;
+        try {
+            if (window.SupabaseService && typeof window.SupabaseService.getTenantId === 'function') {
+                tenantId = await window.SupabaseService.getTenantId();
+            }
+        } catch (e) {
+            tenantId = null;
+        }
+        if (!tenantId) {
+            this.purchaseState.saving = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Faturayı Kaydet'; }
+            this.puSetStatus('Tenant doğrulanamadı. Lütfen tekrar giriş yapın.', 'error');
+            return;
+        }
+
+        // INVOICE — tüm satırlar aynı invoice_id + supplier + description ile
+        // Genel iskonto artık note'ta DEĞİL, kolon olarak (general_discount_amount/type) tutulur
+        var invoiceId = this._puMakeInvoiceId();
+        var invoiceNote = this._puMakeNote(
+            invoiceId,
+            this.purchaseState.supplierName || null,
+            this.purchaseState.description || null,
+            null
+        );
+        var saveGenDisc = this.purchaseState.generalDiscount || { type: 'amount', value: 0 };
+        var saveGdAmount = Number(saveGenDisc.value) || 0;
+        var saveGdType   = saveGenDisc.type === 'percent' ? 'percent' : 'amount';
+
+        // Tarih: fonksiyon başında tek seferlik hesaplanan invoiceDate kullanılır
+        var sCreatedAt = invoiceDate;
+
+        // WAC: genel iskonto sonrası net birim maliyet faktörü
+        var sWac = this._puComputeWacFactor(lines, vatIncluded);
+        var sFactor = sWac.factor;
+
+        // ============================================================
+        // ATOMIC BATCH INSERT
+        // ------------------------------------------------------------
+        // Tum satirlar TEK RPC ile gonderilir. Herhangi biri patlarsa
+        // hepsi rollback olur (sunucu tarafi). Yarim fatura YOK.
+        // ============================================================
+
+        // 1) Tum payload'lari hazirla (validasyon + numeric coerce)
+        var batchItems = [];
+        var skipped = 0;
+
+        for (var i = 0; i < lines.length; i++) {
+            var l = lines[i];
+            var q = parseFloat(l.qty);
+            var u = parseFloat(l.unitCost);
+            var v = parseFloat(l.vat) || 0;
+            var d = parseFloat(l.discount) || 0;
+            if (!Number.isFinite(d) || d < 0) d = 0;
+            if (d > 100) d = 100;
+            var vatMul = 1 + (v / 100);
+            var dMul = 1 - (d / 100);
+
+            var netUnit, lineTotal;
+            if (vatIncluded) {
+                netUnit   = u / vatMul;
+                lineTotal = q * u * dMul;
+            } else {
+                netUnit   = u;
+                lineTotal = q * u * dMul * vatMul;
+            }
+
+            var sRowNetPost = q * netUnit * dMul;
+            var sRowFinalNet = sRowNetPost * sFactor;
+            var sBaseUnitCost = q > 0 ? (sRowFinalNet / q) : 0;
+            if (!Number.isFinite(sBaseUnitCost) || sBaseUnitCost < 0) sBaseUnitCost = 0;
+
+            var item = {
+                raw_material_id: l.rmId,
+                quantity: Number(q),
+                unit: l.rmUnit,
+                unit_cost: Number(netUnit),
+                line_total: Number(lineTotal),
+                vat_rate: Number(v),
+                discount_rate: Number(d),
+                base_quantity: Number(q),
+                base_unit_cost: Number(sBaseUnitCost),
+                general_discount_amount: Number(saveGdAmount) || 0,
+                general_discount_type: saveGdType,
+                note: invoiceNote,
+                invoice_date: sCreatedAt
+            };
+
+            // base_* invalid → bu satiri batch'e DAHIL ETME, kullaniciyi uyar.
+            // (atomik gerek: atılan satır hata olarak görünmeli, sessiz drop yok.)
+            if (!Number.isFinite(item.base_quantity) || item.base_quantity <= 0 ||
+                !Number.isFinite(item.base_unit_cost) || item.base_unit_cost < 0) {
+                console.error('[BATCH NEW] WAC verisi gecersiz — satir batche eklenmedi', item);
+                skipped++;
+                continue;
+            }
+
+            batchItems.push(item);
+        }
+
+        // Hicbir gecerli satir kalmadiysa hata
+        if (!batchItems.length) {
+            this.purchaseState.saving = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Faturayı Kaydet'; }
+            this.puSetStatus('Geçerli satır yok (WAC verisi eksik). Fatura kaydedilmedi.', 'error');
+            return;
+        }
+
+        // Skip varsa kullaniciyi engelle — atomik garantisi icin
+        if (skipped > 0) {
+            this.purchaseState.saving = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Faturayı Kaydet'; }
+            this.puSetStatus(skipped + ' satırda WAC verisi eksik. Fatura kaydedilmedi.', 'error');
+            return;
+        }
+
+        // 2) TEK RPC cagrisi — atomic
+        var resp;
+        try {
+            var rpcClient = window.SupabaseService.getClient && window.SupabaseService.getClient();
+            if (!rpcClient || typeof rpcClient.rpc !== 'function') {
+                console.error('[BATCH NEW] RPC client bulunamadi');
+                resp = { data: null, error: { message: 'Supabase RPC client yok' } };
+            } else {
+                if(window.__DEBUG__)console.log('[BATCH NEW] RPC → insert_purchase_items_batch, satir:', batchItems.length);
+                var rpcRes = await rpcClient.rpc('insert_purchase_items_batch', {
+                    p_items: batchItems
+                });
+                if(window.__DEBUG__)console.log('[BATCH NEW] RPC RESULT:', rpcRes);
+                if (rpcRes && rpcRes.error) {
+                    console.error('[BATCH NEW] RPC FAIL — TUM SATIRLAR ROLLBACK', rpcRes.error);
+                    resp = { data: null, error: rpcRes.error };
+                } else {
+                    resp = { data: rpcRes && rpcRes.data, error: null };
+                }
+            }
+        } catch (rpcErr) {
+            console.error('[BATCH NEW] RPC THREW — TUM SATIRLAR ROLLBACK', rpcErr);
+            resp = { data: null, error: rpcErr };
+        }
+
+        // 3) Sonuc isle
+        if (resp && resp.error) {
+            fail = batchItems.length;
+            ok = 0;
+            lastErr = resp.error;
+        } else {
+            ok = (resp.data && Number(resp.data.count)) || batchItems.length;
+            fail = 0;
+        }
+
+        this.purchaseState.saving = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Faturayı Kaydet'; }
+
+        if (!this._isActive) return;
+
+        if (fail > 0) {
+            this.puSetStatus(ok + ' kayıt eklendi, ' + fail + ' satır hata verdi. ' + this.getErrorMessage(lastErr, ''), 'error');
+        } else {
+            this.puSetStatus('Fatura kaydedildi (' + ok + ' satır). Ham madde maliyetleri otomatik güncellenecek.', 'success');
+            this.purchaseState.lines = [];
+            this.purchaseState.supplierName = '';
+            this.purchaseState.description = '';
+            this.purchaseState.generalDiscount = { type: 'amount', value: 0 };
+            var sEl2 = document.getElementById('puSupplier');
+            var dEl2 = document.getElementById('puDescription');
+            var gdt2 = document.getElementById('puGenDiscType');
+            var gdv2 = document.getElementById('puGenDiscValue');
+            var dt2 = document.getElementById('puDate');
+            if (sEl2) sEl2.value = '';
+            if (dEl2) dEl2.value = '';
+            if (gdt2) gdt2.value = 'amount';
+            if (gdv2) gdv2.value = '';
+            if (dt2) dt2.value = new Date().toISOString().slice(0, 10);
+            this.puAddLine();
+        }
+
+        await this.puLoadRecent();
+        window.dispatchEvent(new CustomEvent('products:updated'));
+        } finally {
+            // Hata olsa da, başarı olsa da, erken return olsa da flag mutlaka resetlenir
+            this._savingPurchase = false;
+        }
+    },
+
+    puRemove: async function (invoiceId) {
+        // invoice id gelir → o faturanın tüm itemlarını soft-delete
+        var inv = this._puFindInvoice(invoiceId);
+        if (!inv) {
+            // Fallback: belki direkt item id gelmiş (eski davranış)
+            var okSingle = window.confirm('Bu kayıt silinsin mi? (Ham madde maliyeti yeniden hesaplanacak)');
+            if (!okSingle) return;
+            try {
+                var rsingle = await window.SupabaseService.update('purchase_items', invoiceId, { is_deleted: true });
+                if (!this._isActive) return;
+                if (rsingle && rsingle.error) {
+                    this.puSetStatus(this.getErrorMessage(rsingle.error, 'Silinemedi.'), 'error');
+                    return;
+                }
+                this.puSetStatus('Silindi.', 'success');
+                await this.puLoadRecent();
+                window.dispatchEvent(new CustomEvent('products:updated'));
+            } catch (err) {
+                this.puSetStatus(this.getErrorMessage(err, 'Beklenmeyen hata.'), 'error');
+            }
+            return;
+        }
+
+        var msg = 'Bu fatura (' + inv.count + ' satır) silinsin mi? Ham madde maliyetleri yeniden hesaplanacak.';
+        var okInv = window.confirm(msg);
+        if (!okInv) return;
+
+        var failC = 0, okC = 0, lastErrI = null;
+        for (var ri = 0; ri < inv.items.length; ri++) {
+            try {
+                var rres = await window.SupabaseService.update('purchase_items', inv.items[ri].id, { is_deleted: true });
+                if (rres && rres.error) { failC++; lastErrI = rres.error; }
+                else { okC++; }
+            } catch (err) { failC++; lastErrI = err; }
+        }
+
+        if (!this._isActive) return;
+        if (failC > 0) {
+            this.puSetStatus(okC + ' silindi, ' + failC + ' hata. ' + this.getErrorMessage(lastErrI, ''), 'error');
+        } else {
+            this.puSetStatus('Fatura silindi (' + okC + ' satır).', 'success');
+        }
+        await this.puLoadRecent();
+        window.dispatchEvent(new CustomEvent('products:updated'));
+    },
+
+    puSetStatus: function (msg, type) {
+        var el = document.getElementById('puStatus');
+        if (!el) return;
+        if (type === 'success') {
+            el.innerHTML = '<div style="padding:12px 14px; border-radius:12px; background:#ecfdf5; border:1px solid #86efac; color:#166534; font-size:13px; font-weight:600;">' + this.escapeHtml(msg) + '</div>';
+        } else {
+            el.innerHTML = '<div style="padding:12px 14px; border-radius:12px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600;">' + this.escapeHtml(msg) + '</div>';
+        }
+    },
+
+    formatNumber: function (value) {
+        var n = Number(value);
+        if (!Number.isFinite(n)) return '0';
+        return n.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
     }
 };

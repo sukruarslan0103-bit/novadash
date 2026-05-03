@@ -390,7 +390,7 @@
     // ---------- public render ----------
     window.TasksView = {
         render: function (container) {
-            console.log('TasksView render çalıştı');
+            if(window.__DEBUG__)console.log('TasksView render çalıştı');
             if (!container) { console.error('TasksView: container yok'); return; }
 
             container.style.display = 'block';

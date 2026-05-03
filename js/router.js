@@ -32,7 +32,7 @@ window.Router = {
 
     navigate() {
         const hash = (window.location.hash || '#dashboard').replace('#', '');
-        console.log('[Router] navigate →', hash);
+        if(window.__DEBUG__)console.log('[Router] navigate →', hash);
 
         /* ============================================================
            AUTH GUARD
@@ -69,7 +69,7 @@ window.Router = {
                 '| window.' + route.view + ' =', window[route.view]);
             return;
         }
-        console.log('[Router] rendering view:', route.view);
+        if(window.__DEBUG__)console.log('[Router] rendering view:', route.view);
 
         // Destroy previous view
         this._destroyCurrentView();
@@ -102,7 +102,7 @@ window.Router = {
 
         // Explicit tasks handler (diagnostik + garanti)
         if (hash === 'tasks') {
-            console.log('[Router] rendering TasksView');
+            if(window.__DEBUG__)console.log('[Router] rendering TasksView');
             container.innerHTML = '';
             if (window.TasksView && typeof window.TasksView.render === 'function') {
                 window.TasksView.render(container);

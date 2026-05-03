@@ -1,8 +1,11 @@
 /* ============================================================
    RAW MATERIALS VIEW — Ham Madde yönetimi
-   - Liste (name, unit, cost)
-   - Ekle / Güncelle (name, cost) / Soft Delete
+   - Liste (name, unit, cost, vat_rate)
+   - Ekle / Güncelle (name, unit, vat_rate) / Soft Delete
    - tenant_id → backend (set_tenant_id trigger + RLS) çözümler
+   - cost: WAC ile alış sırasında otomatik dolar (manuel girilmez)
+   - vat_rate: hammadde bazında varsayılan KDV; alış ekranında
+              hammadde seçilince satıra otomatik atanır.
    ============================================================ */
 
 window.RawMaterialsView = {
@@ -12,6 +15,7 @@ window.RawMaterialsView = {
     _listeners: [],
 
     UNIT_OPTIONS: ['gr', 'kg', 'ml', 'lt', 'cl', 'adet', 'paket'],
+    VAT_OPTIONS: [0, 1, 10, 20],
 
     async render(container) {
         this._isActive = true;
@@ -19,6 +23,11 @@ window.RawMaterialsView = {
 
         var unitOptionsHtml = this.UNIT_OPTIONS.map(function (u) {
             return '<option value="' + u + '">' + u + '</option>';
+        }).join('');
+
+        var vatOptionsHtml = this.VAT_OPTIONS.map(function (v) {
+            var sel = (v === 20) ? ' selected' : '';
+            return '<option value="' + v + '"' + sel + '>%' + v + '</option>';
         }).join('');
 
         container.innerHTML = `
@@ -46,9 +55,21 @@ window.RawMaterialsView = {
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Birim Maliyet (₺)</label>
-                        <input type="number" class="form-input" id="rawMatCost" placeholder="0.00" step="0.0001" min="0">
+                        <label class="form-label">KDV Oranı</label>
+                        <select class="form-select" id="rawMatVat">
+                            ${vatOptionsHtml}
+                        </select>
                     </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Birim Maliyet (₺)</label>
+                        <input type="number" class="form-input" id="rawMatCost" placeholder="0.00" step="0.0001" min="0" disabled
+                               style="background:#f1f5f9; color:#64748b; cursor:not-allowed;">
+                    </div>
+                </div>
+
+                <div style="margin-top:6px; font-size:12px; color:#64748b;">
+                    Birim maliyet alışlardan otomatik hesaplanır (WAC). Manuel girilmez.
                 </div>
 
                 <div style="margin-top:14px; display:flex; gap:10px;">
@@ -64,20 +85,50 @@ window.RawMaterialsView = {
                         <tr>
                             <th>Ad</th>
                             <th>Birim</th>
+                            <th style="text-align:center;">KDV</th>
                             <th style="text-align:right;">Birim Maliyet</th>
                             <th style="width:180px;">İşlemler</th>
                         </tr>
                     </thead>
                     <tbody id="rawMatTableBody">
                         <tr>
-                            <td colspan="4" style="text-align:center; padding:24px;">Yükleniyor...</td>
+                            <td colspan="5" style="text-align:center; padding:24px;">Yükleniyor...</td>
                         </tr>
                     </tbody>
                 </table>
             </div>
         `;
 
+        // === CACHE INVALIDATION HANDLER (sadece bir kez) ===
+        if (!this._cacheEventsBound) {
+            this._cacheEventsBound = true;
+            window.addEventListener('products:updated', function () {
+                if (window.ViewCache) window.ViewCache.invalidate('raw-materials:');
+            });
+            window.addEventListener('raw-materials:updated', function () {
+                if (window.ViewCache) window.ViewCache.invalidate('raw-materials:');
+            });
+        }
+
+        // === CACHE READ ===
+        var tid = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+        var cacheKey = 'raw-materials:' + tid;
+        if (window.ViewCache) {
+            var cached = window.ViewCache.get(cacheKey);
+            if (cached && Array.isArray(cached.materials)) {
+                this.materials = cached.materials;
+                this.renderTable();
+                this.setStatus(this.materials.length + ' ham madde yüklendi (cache).', 'success');
+                return;
+            }
+        }
+
         await this.loadMaterials();
+
+        // === CACHE WRITE ===
+        if (window.ViewCache && Array.isArray(this.materials)) {
+            window.ViewCache.set(cacheKey, { materials: this.materials }, 60 * 1000);
+        }
     },
 
     loadMaterials: async function () {
@@ -86,7 +137,7 @@ window.RawMaterialsView = {
 
         try {
             if (!window.SupabaseService || typeof window.SupabaseService.query !== 'function') {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">SupabaseService yüklenemedi.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:#dc2626;">SupabaseService yüklenemedi.</td></tr>';
                 this.setStatus('SupabaseService yüklenemedi.', 'error');
                 return;
             }
@@ -96,12 +147,12 @@ window.RawMaterialsView = {
                     { op: 'eq', column: 'is_deleted', value: false }
                 ],
                 order: { column: 'name', asc: true },
-                select: 'id,name,unit,cost,is_active,created_at'
+                select: 'id,name,unit,cost,vat_rate,is_active,created_at'
             });
             if (!this._isActive) return;
 
             if (result.error) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">Ham maddeler yüklenemedi.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:#dc2626;">Ham maddeler yüklenemedi.</td></tr>';
                 this.setStatus(this.getErrorMessage(result.error, 'raw_materials okunamadı.'), 'error');
                 return;
             }
@@ -111,7 +162,7 @@ window.RawMaterialsView = {
             this.setStatus(this.materials.length + ' ham madde yüklendi.', 'success');
         } catch (error) {
             if (!this._isActive) return;
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
             this.setStatus(this.getErrorMessage(error, 'Beklenmeyen hata.'), 'error');
         }
     },
@@ -121,7 +172,7 @@ window.RawMaterialsView = {
         if (!tbody) return;
 
         if (!this.materials.length) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#64748b;">Henüz ham madde yok. Yukarıdan ekleyebilirsin.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:24px; color:#64748b;">Henüz ham madde yok. Yukarıdan ekleyebilirsin.</td></tr>';
             return;
         }
 
@@ -130,12 +181,14 @@ window.RawMaterialsView = {
         tbody.innerHTML = this.materials.map(function (m) {
             var name = self.escapeHtml(m.name || '-');
             var unit = self.escapeHtml(m.unit || '-');
+            var vat  = (m.vat_rate != null) ? Number(m.vat_rate) : 20;
             var cost = self.formatMoney(m.cost);
-            var id = self.escapeHtml(m.id);
+            var id   = self.escapeHtml(m.id);
 
             return '<tr>' +
                 '<td>' + name + '</td>' +
                 '<td>' + unit + '</td>' +
+                '<td style="text-align:center; font-weight:600; color:#475569;">%' + vat + '</td>' +
                 '<td style="text-align:right; font-weight:700;">' + cost + '</td>' +
                 '<td>' +
                     '<div style="display:flex; gap:6px; flex-wrap:wrap;">' +
@@ -158,12 +211,14 @@ window.RawMaterialsView = {
 
         var nameEl = document.getElementById('rawMatName');
         var unitEl = document.getElementById('rawMatUnit');
+        var vatEl  = document.getElementById('rawMatVat');
         var costEl = document.getElementById('rawMatCost');
         var title  = document.getElementById('rawMatFormTitle');
         var cancel = document.getElementById('rawMatCancelBtn');
 
         if (nameEl) nameEl.value = m.name || '';
         if (unitEl) unitEl.value = m.unit || 'gr';
+        if (vatEl)  vatEl.value  = (m.vat_rate != null ? String(m.vat_rate) : '20');
         if (costEl) costEl.value = Number(m.cost) || 0;
         if (title)  title.textContent = 'Ham Madde Düzenle';
         if (cancel) cancel.style.display = '';
@@ -179,12 +234,14 @@ window.RawMaterialsView = {
     clearForm: function () {
         var nameEl = document.getElementById('rawMatName');
         var unitEl = document.getElementById('rawMatUnit');
+        var vatEl  = document.getElementById('rawMatVat');
         var costEl = document.getElementById('rawMatCost');
         var title  = document.getElementById('rawMatFormTitle');
         var cancel = document.getElementById('rawMatCancelBtn');
 
         if (nameEl) nameEl.value = '';
         if (unitEl) unitEl.value = 'gr';
+        if (vatEl)  vatEl.value  = '20';
         if (costEl) costEl.value = '';
         if (title)  title.textContent = 'Ham Madde Ekle';
         if (cancel) cancel.style.display = 'none';
@@ -193,17 +250,17 @@ window.RawMaterialsView = {
     save: async function () {
         var nameEl = document.getElementById('rawMatName');
         var unitEl = document.getElementById('rawMatUnit');
-        var costEl = document.getElementById('rawMatCost');
+        var vatEl  = document.getElementById('rawMatVat');
 
         var name = nameEl ? String(nameEl.value || '').trim() : '';
         var unit = unitEl ? String(unitEl.value || '').trim() : '';
-        var cost = costEl ? parseFloat(costEl.value) : NaN;
+        var vat  = vatEl  ? Number(vatEl.value)  : 20;
 
         var errors = [];
 
         if (!name) errors.push('Ad zorunludur.');
         if (this.UNIT_OPTIONS.indexOf(unit) === -1) errors.push('Geçerli bir birim seç.');
-        if (!Number.isFinite(cost) || cost < 0) errors.push('Maliyet 0 veya pozitif olmalı.');
+        if (!Number.isFinite(vat) || vat < 0 || vat > 100) errors.push('KDV oranı 0-100 arası olmalı.');
 
         if (errors.length) {
             this.setStatus(errors.join(' '), 'error');
@@ -230,16 +287,19 @@ window.RawMaterialsView = {
         var response;
 
         if (this.editingId) {
+            // Update — cost'a dokunma (WAC kontrolünde)
             response = await window.SupabaseService.update('raw_materials', this.editingId, {
                 name: name,
                 unit: unit,
-                cost: cost
+                vat_rate: vat
             });
         } else {
+            // Insert — cost 0 olarak başlar, ilk alışta WAC dolduracak
             response = await window.SupabaseService.insert('raw_materials', {
                 name: name,
                 unit: unit,
-                cost: cost
+                cost: 0,
+                vat_rate: vat
             });
         }
         if (!this._isActive) return;
@@ -252,6 +312,7 @@ window.RawMaterialsView = {
         this.setStatus(this.editingId ? 'Ham madde güncellendi.' : 'Ham madde eklendi.', 'success');
         this.editingId = null;
         this.clearForm();
+        try { window.dispatchEvent(new Event('raw-materials:updated')); } catch (e) {}
         await this.loadMaterials();
     },
 
@@ -283,6 +344,7 @@ window.RawMaterialsView = {
         }
 
         this.setStatus('"' + (m.name || '') + '" silindi.', 'success');
+        try { window.dispatchEvent(new Event('raw-materials:updated')); } catch (e) {}
         await this.loadMaterials();
     },
 

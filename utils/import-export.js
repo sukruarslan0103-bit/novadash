@@ -544,14 +544,16 @@ window.ImportExport = (function () {
     }
 
     /* ============================================================
-       FULL BACKUP — export_all_data() / import_all_data()
-       Tenant is resolved server-side via auth.uid().
-       Atomic + idempotent (ON CONFLICT DO NOTHING).
+       FULL BACKUP — export_all_data() + restore_full_backup()
+       TEK YOL: import sadece restore_full_backup uzerinden yapilir.
+       (Eski import_all_data RPC'si kullanilmiyor.)
+       Tenant server-side (auth.uid). Idempotent (ON CONFLICT DO NOTHING).
     ============================================================ */
 
     const BACKUP_EXPORT_VERSION = '1.0';
     const BACKUP_REQUIRED_TABLES = [
         'categories', 'products', 'sales', 'product_sales',
+        'purchase_items', 'raw_materials',
         'expenses', 'events', 'tasks', 'settings'
     ];
 
@@ -616,6 +618,7 @@ window.ImportExport = (function () {
         const c = backupClient();
         if (!c) return { ok: false, error: 'Supabase not initialized' };
 
+        // === Parse input ===
         let payload = null;
         try {
             if (input instanceof File || input instanceof Blob) {
@@ -631,15 +634,97 @@ window.ImportExport = (function () {
             return { ok: false, error: 'JSON parse failed: ' + (e.message || e) };
         }
 
+        // === Validate (export_version + data shape) ===
         const invalid = validateBackupPayload(payload);
         if (invalid) return { ok: false, error: invalid };
 
+        // === Build the shape restore_full_backup expects ===
+        // restore_full_backup(backup JSONB, tenant UUID) — TEK import yolu
+        const data = payload.data || {};
+        const backupForRpc = {
+            products:       Array.isArray(data.products)       ? data.products       : [],
+            sales:          Array.isArray(data.sales)          ? data.sales          : [],
+            product_sales:  Array.isArray(data.product_sales)  ? data.product_sales  : [],
+            expenses:       Array.isArray(data.expenses)       ? data.expenses       : [],
+            purchase_items: Array.isArray(data.purchase_items) ? data.purchase_items : [],
+            raw_materials:  Array.isArray(data.raw_materials)  ? data.raw_materials  : []
+        };
+
+        // === Call FIXED restore_full_backup (idempotency_key + ON CONFLICT) ===
+        // tenant=null -> fonksiyon auth.uid() uzerinden tenant cozer
         try {
-            const { data, error } = await c.rpc('import_all_data', { p_payload: payload });
-            if (error) return { ok: false, error: error.message || String(error) };
-            return { ok: true, result: data };
+            const { data: rpcData, error } = await c.rpc('restore_full_backup', {
+                backup: backupForRpc,
+                tenant: null
+            });
+
+            // Duplicate / unique_violation hatalari fonksiyon icinde
+            // skipped sayaca aktariliyor; buraya YALNIZCA gercek
+            // sistem hatalari dusmeli.
+            if (error) {
+                // Yine de duplicate temali bir hata gelirse swallow yerine
+                // raporla — kullanici sebebi gormeli.
+                return {
+                    ok: false,
+                    error: error.message || String(error)
+                };
+            }
+
+            if (!rpcData || rpcData.success !== true) {
+                return { ok: false, error: 'Restore basarisiz: bos yanit' };
+            }
+
+            // === Build human-friendly summary ===
+            const ins = rpcData.inserted || {};
+            const skp = rpcData.skipped  || {};
+
+            const insTotal =
+                (ins.products || 0) +
+                (ins.sales || 0) +
+                (ins.product_sales || 0) +
+                (ins.expenses || 0);
+
+            const skpTotal =
+                (skp.products || 0) +
+                (skp.sales || 0) +
+                (skp.product_sales || 0) +
+                (skp.expenses || 0);
+
+            let message =
+                (ins.products || 0)      + ' urun, ' +
+                (ins.sales || 0)         + ' satis, ' +
+                (ins.product_sales || 0) + ' urun-satis, ' +
+                (ins.expenses || 0)      + ' gider eklendi';
+
+            if (skpTotal > 0) {
+                message += ' | ' + skpTotal + ' kayit zaten mevcuttu (atlandi)';
+            }
+
+            // === Cache invalidate + event dispatch ===
+            try {
+                if (window.ViewCache && typeof window.ViewCache.clear === 'function') {
+                    window.ViewCache.clear();
+                }
+                window.dispatchEvent(new Event('sales:updated'));
+                window.dispatchEvent(new Event('expenses:updated'));
+                window.dispatchEvent(new Event('products:updated'));
+                window.dispatchEvent(new Event('dashboard:refresh'));
+            } catch (e) { /* never block */ }
+
+            return {
+                ok: true,
+                result: rpcData,
+                inserted: ins,
+                skipped: skp,
+                insertedTotal: insTotal,
+                skippedTotal: skpTotal,
+                message: message
+            };
         } catch (err) {
-            return { ok: false, error: (err && err.message) || 'Import failed' };
+            return {
+                ok: false,
+                error: (err && err.message) || 'Import failed'
+            };
         }
     }
 

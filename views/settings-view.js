@@ -77,8 +77,45 @@ window.SettingsView = {
                     if (!r.ok) {
                         if (window.Toast) Toast.error(r.error || 'Import failed');
                     } else {
-                        if (window.Toast) Toast.success('Yedek geri yüklendi');
-                        setTimeout(() => location.reload(), 600);
+                        // Detayli inserted/skipped ozet
+                        const ins = r.inserted || {};
+                        const skp = r.skipped  || {};
+                        const insTotal = Number(r.insertedTotal || 0);
+                        const skpTotal = Number(r.skippedTotal  || 0);
+
+                        // Ana satir
+                        let mainLine =
+                            (ins.sales || 0)         + ' satış eklendi';
+                        if (skpTotal > 0) {
+                            mainLine += ' | ' + skpTotal + ' kayıt zaten mevcuttu, atlandı';
+                        }
+
+                        // Detay satiri (kategori bazinda kirilim)
+                        const parts = [];
+                        if ((ins.products || 0)      || (skp.products || 0))      parts.push('Ürünler: ' + (ins.products||0)      + ' eklendi, ' + (skp.products||0)      + ' atlandı');
+                        if ((ins.sales || 0)         || (skp.sales || 0))         parts.push('Satışlar: ' + (ins.sales||0)         + ' eklendi, ' + (skp.sales||0)         + ' atlandı');
+                        if ((ins.product_sales || 0) || (skp.product_sales || 0)) parts.push('Ürün-Satış: ' + (ins.product_sales||0) + ' eklendi, ' + (skp.product_sales||0) + ' atlandı');
+                        if ((ins.expenses || 0)      || (skp.expenses || 0))      parts.push('Giderler: ' + (ins.expenses||0)      + ' eklendi, ' + (skp.expenses||0)      + ' atlandı');
+
+                        const fullMessage = parts.length
+                            ? mainLine + '\n' + parts.join('\n')
+                            : mainLine;
+
+                        if (window.Toast) {
+                            if (insTotal > 0) {
+                                Toast.success(fullMessage);
+                            } else if (skpTotal > 0) {
+                                // Hicbir sey eklenmedi, hepsi duplicate
+                                Toast.info ? Toast.info(fullMessage) : Toast.success(fullMessage);
+                            } else {
+                                Toast.success('Yedek geri yüklendi (boş)');
+                            }
+                        }
+
+                        // Sayfa refresh — kullanici toast'u okuyabilsin
+                        if (insTotal > 0) {
+                            setTimeout(() => location.reload(), 2500);
+                        }
                     }
                 } finally {
                     importBtn.disabled = false;

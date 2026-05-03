@@ -156,20 +156,26 @@ window.ProductsService = (function () {
 
     async function create(product) {
         clearPerformanceCache();
-        return await window.SupabaseService.insert('products', product);
+        var res = await window.SupabaseService.insert('products', product);
+        try { window.dispatchEvent(new Event('products:updated')); } catch (e) {}
+        return res;
     }
 
     async function update(id, updates) {
         clearPerformanceCache();
-        return await window.SupabaseService.update('products', id, updates);
+        var res = await window.SupabaseService.update('products', id, updates);
+        try { window.dispatchEvent(new Event('products:updated')); } catch (e) {}
+        return res;
     }
 
     async function remove(id) {
         clearPerformanceCache();
-        return await window.SupabaseService.update('products', id, {
+        var res = await window.SupabaseService.update('products', id, {
             is_deleted: true,
             is_active: false
         });
+        try { window.dispatchEvent(new Event('products:updated')); } catch (e) {}
+        return res;
     }
 
     return {

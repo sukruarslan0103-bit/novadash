@@ -572,15 +572,15 @@ window.AnalyticsService = {
         // Yerel hesaplamalar için tarih (DB artık almıyor — client'ta kullanılıyor)
         var today = this.today();
 
-        // === SINGLE RPC — yeni imza: sadece (p_start, p_end) ===
+        // === SINGLE UNIFIED RPC — analytics + alerts_master tek çağrıda ===
         var res;
         try {
-            res = await this.client().rpc('get_dashboard_analytics', {
+            res = await this.client().rpc('get_dashboard_with_alerts', {
                 p_start: start,
                 p_end: end
             });
         } catch (err) {
-            console.warn('[analytics] get_dashboard_analytics rpc threw:', err && err.message ? err.message : err);
+            console.warn('[analytics] get_dashboard_with_alerts rpc threw:', err && err.message ? err.message : err);
             res = { data: null, error: err };
         }
 
@@ -700,6 +700,45 @@ window.AnalyticsService = {
             alerts: alerts
         });
 
+        // === ALERTS MASTER (decision cards) — RPC içinden ===
+        // Defansif parser: ne format gelirse gelsin ARRAY garantisi
+        function _coerceArray(v) {
+            if (!v) return [];
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string') {
+                try {
+                    var parsed = JSON.parse(v);
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch (e) { return []; }
+            }
+            if (typeof v === 'object') {
+                if (Array.isArray(v.rows))           return v.rows;
+                if (Array.isArray(v.data))           return v.data;
+                if (Array.isArray(v.items))          return v.items;
+                if (Array.isArray(v.alerts_master)) return v.alerts_master;
+            }
+            return [];
+        }
+
+        var rawAm = d.alerts_master;
+        var alertsMaster = _coerceArray(rawAm);
+
+        // FAILSAFE — object icinde gizli array varsa yakala
+        if (!alertsMaster.length && rawAm && typeof rawAm === 'object') {
+            alertsMaster = Object.values(rawAm).find(Array.isArray) || [];
+        }
+        // Fallback kaynaklar
+        if (!alertsMaster.length) {
+            alertsMaster = _coerceArray(d.product_priority);
+        }
+
+        d.alerts_master = alertsMaster;
+
+        console.log('[analytics] alerts_master count:', alertsMaster.length,
+                    '| raw type:', typeof rawAm,
+                    '| sample:', alertsMaster[0] || null,
+                    '| raw:', rawAm);
+
         return {
             monthly: {
                 ciro: monthlyRevenue,
@@ -730,7 +769,9 @@ window.AnalyticsService = {
             analysis: analysis,
             healthScore: healthScore,
             taskCount: tasksToday,
-            tasks: allTasks
+            tasks: allTasks,
+            alerts_master: alertsMaster,
+            product_priority: alertsMaster
         };
     }
 };

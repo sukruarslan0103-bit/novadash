@@ -2,7 +2,6 @@
    DASHBOARD VIEW — Full featured
    AnalyticsService üzerinden veri alır.
    KPI toggle, alerts list, analysis, health score, top products dahil.
-   (Decision card / alerts_master sistemi Sağlık Raporu sayfasına taşındı.)
    ============================================================ */
 
 window.DashboardView = {
@@ -13,12 +12,15 @@ window.DashboardView = {
     _listeners: [],
     _isActive: false,
 
-    async render(container) {
+    async render(container, force) {
         var self = window.DashboardView;
         self._isActive = true;
+        force = !!force;
 
         if (self.isRendering) {
             self._pendingRefresh = true;
+            // bekleyen refresh force ise force kalsin
+            if (force) self._pendingForce = true;
             return;
         }
 
@@ -28,16 +30,29 @@ window.DashboardView = {
         if (!self._eventsBound) {
             self._eventsBound = true;
 
+            // FORCE refresh: cache bypass + view re-render
             function handleUpdate() {
+                // 1) HER ZAMAN ViewCache'i invalidate et (container yoksa bile).
+                //    Kullanici expenses/sales/products sayfasinda iken
+                //    dashboard destroy olmus oluyor; container=null donerse
+                //    cache'i yine de bosalt -> sonra dashboard'a donunce
+                //    fresh veri gelir.
+                if (window.ViewCache && typeof window.ViewCache.invalidate === 'function') {
+                    try { window.ViewCache.invalidate('dashboard:'); } catch (e) { /* noop */ }
+                }
+                self.cachedData = null;
+
+                // 2) Container yoksa (bu sayfada degiliz) re-render gerekmez,
+                //    cache zaten bos -> sonraki ziyaret fresh fetch yapar.
                 if (!self.container) return;
 
                 if (self.isRendering) {
                     self._pendingRefresh = true;
+                    self._pendingForce = true;
                     return;
                 }
 
-                self.cachedData = null;
-                self.render(self.container);
+                self.render(self.container, true);   // ← force=true
             }
 
             self._on(window, 'sales:updated', handleUpdate);
@@ -52,7 +67,12 @@ window.DashboardView = {
 
         var cacheKey = 'dashboard:' + tenantId + ':' + start + ':' + end;
 
-        var cached = window.ViewCache ? window.ViewCache.get(cacheKey) : null;
+        // FORCE: ViewCache invalidate + cache hit'i atla
+        if (force && window.ViewCache && typeof window.ViewCache.invalidate === 'function') {
+            try { window.ViewCache.invalidate(cacheKey); } catch (e) { /* noop */ }
+        }
+
+        var cached = (!force && window.ViewCache) ? window.ViewCache.get(cacheKey) : null;
 
         if (cached) {
             self.cachedData = cached;
@@ -105,9 +125,11 @@ window.DashboardView = {
 
         if (self._pendingRefresh) {
             self._pendingRefresh = false;
+            var wasForce = !!self._pendingForce;
+            self._pendingForce = false;
             self.cachedData = null;
             if (self.container) {
-                self.render(self.container);
+                self.render(self.container, wasForce);
             }
         }
     },
@@ -169,7 +191,7 @@ window.DashboardView = {
 
             '<div class="card" style="cursor:pointer;" onclick="window.location.hash=\'#health\'">' +
                 '<div class="card-header">' +
-                    '<div><div class="card-title">Saglik Raporu</div><span class="card-subtitle">Isletme performans skoru</span></div>' +
+                    '<div><div class="card-title">Nabız</div><span class="card-subtitle">Isletme performans skoru</span></div>' +
                     '<div style="display:flex;align-items:center;gap:10px;">' +
                         '<div style="position:relative;width:44px;height:44px;">' +
                             '<svg viewBox="0 0 36 36" style="width:44px;height:44px;transform:rotate(-90deg);">' +
@@ -382,21 +404,10 @@ window.DashboardView = {
     },
 
     updateHeaderWidgets(data) {
-        var healthValue = document.querySelector('.health-value');
-        var healthFill = document.querySelector('.health-fill');
-
-        if (healthValue) {
-            healthValue.textContent = data.healthScore || 0;
-        }
-
-        if (healthFill) {
-            healthFill.setAttribute('stroke-dasharray', (data.healthScore || 0) + ', 100');
-        }
-
-        var taskCountEl = document.getElementById('taskCount');
-        if (taskCountEl) {
-            var count = data.taskCount || 0;
-            taskCountEl.textContent = count + ' görev';
+        // Tek source of truth — global Nabız beacon helper
+        if (window.HealthIndicator && typeof window.HealthIndicator.set === 'function') {
+            var hasData = !!(data && (data.healthScore || data.monthly || data.weeklySales));
+            window.HealthIndicator.set(data && data.healthScore || 0, hasData);
         }
     },
 

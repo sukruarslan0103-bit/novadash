@@ -47,8 +47,6 @@ DECLARE
     v_weekly_sales       JSONB;
     v_expense_categories JSONB;
     v_top_products       JSONB;
-    v_tasks_today_count  INT := 0;
-    v_all_tasks          JSONB;
 BEGIN
     -- === AUTH GUARD ===
     v_auth_uid := auth.uid();
@@ -188,30 +186,6 @@ BEGIN
         LIMIT 5
     ) t;
 
-    -- === TASKS TODAY COUNT ===
-    SELECT COUNT(*)
-    INTO v_tasks_today_count
-    FROM tasks
-    WHERE tenant_id = v_tenant_id
-      AND due_date = v_today;
-
-    -- === ALL TASKS (LIMIT 100 — DoS koruması) ===
-    SELECT COALESCE(jsonb_agg(row_data ORDER BY (row_data->>'due_date') DESC NULLS LAST), '[]'::jsonb)
-    INTO v_all_tasks
-    FROM (
-        SELECT jsonb_build_object(
-            'id', id,
-            'due_date', due_date::TEXT,
-            'status', status,
-            'priority', priority,
-            'title', title
-        ) AS row_data
-        FROM tasks
-        WHERE tenant_id = v_tenant_id
-        ORDER BY due_date DESC NULLS LAST
-        LIMIT 100
-    ) t;
-
     -- === RETURN ===
     RETURN jsonb_build_object(
         'monthly_revenue',       v_monthly_revenue,
@@ -229,8 +203,6 @@ BEGIN
         'weekly_sales',          v_weekly_sales,
         'expense_categories',    v_expense_categories,
         'top_products',          v_top_products,
-        'tasks_today_count',     v_tasks_today_count,
-        'all_tasks',             v_all_tasks,
         'today',                 v_today::TEXT,
         'yesterday',             v_yesterday::TEXT,
         'week_start',            v_week_start::TEXT

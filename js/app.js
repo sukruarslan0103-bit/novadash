@@ -156,7 +156,12 @@
         var success = await bootstrapSupabase();
 
         if (success) {
-            window.location.hash = '#dashboard';
+            // safeNavigate: aktif sayfayi (#expenses, #products vs.) override etmez
+            if (typeof window.safeNavigateToDashboard === 'function') {
+                window.safeNavigateToDashboard();
+            } else if (!window.location.hash || window.location.hash === '#login') {
+                window.location.hash = '#dashboard';
+            }
         }
     }
 

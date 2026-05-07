@@ -64,18 +64,8 @@ window.SupabaseService = (function () {
        INIT
     ============================================================ */
     function init() {
-        if (!window.APP_CONFIG) {
-            console.error('APP_CONFIG not found. config.js missing.');
-            return;
-        }
-
-        const url = window.APP_CONFIG.SUPABASE_URL;
-        const key = window.APP_CONFIG.SUPABASE_ANON_KEY;
-
-        if (!url || !key) {
-            console.error('Supabase config missing');
-            return;
-        }
+        const url = "https://czbovdurwdjpdxgpobqn.supabase.co";
+        const key = "sb_publishable_4SYCpNuY_ftBkWS4Sn-5Qg_cQW2sR9p";
 
         client = supabase.createClient(url, key);
 
@@ -83,13 +73,25 @@ window.SupabaseService = (function () {
         try { window.supabase = client; } catch (e) { /* noop */ }
 
         // Auth state değiştiğinde tenant cache'i invalidate et
-        client.auth.onAuthStateChange(function (event) {
+        client.auth.onAuthStateChange(function (event, session) {
             if (window.ViewCache && typeof window.ViewCache.clear === 'function') {
                 window.ViewCache.clear();
             }
 
             if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
                 invalidateTenantCache();
+            }
+
+            // GLOBAL LISTENER — SIGNED_IN
+            // Kullanici gercek sayfasinda (#expenses, #products, vs.) iken
+            // tab focus / token refresh ile SIGNED_IN tekrar fire edebilir.
+            // safeNavigateToDashboard() yalnizca bos hash veya #login'da
+            // izin verir; aktif sayfayi ASLA override etmez.
+            if (event === 'SIGNED_IN' && session) {
+                try { window.STATE.authenticated = true; } catch (e) {}
+                if (typeof window.safeNavigateToDashboard === 'function') {
+                    window.safeNavigateToDashboard();
+                }
             }
 
             if (event === 'SIGNED_OUT') {

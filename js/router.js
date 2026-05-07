@@ -3,6 +3,33 @@
    Auth guard: authenticated olmadan panel erişilemez
    ============================================================ */
 
+/* ============================================================
+   GLOBAL HASH OVERRIDE GUARD
+   Kullanicinin son navigation'ini takip eder.
+   safeNavigateToDashboard() aktif sayfayi ASLA bozmaz.
+   ============================================================ */
+window.__lastUserNavigation = window.location.hash || null;
+
+window.addEventListener('hashchange', function () {
+    window.__lastUserNavigation = window.location.hash || null;
+});
+
+/**
+ * Dashboard'a guvenli yonlendirme.
+ * Sadece su iki durumda izin verir:
+ *   - hash hic yok (ilk yukleme)
+ *   - hash === '#login' (authenticated user yanlis sayfada)
+ *
+ * Diger TUM durumlar (#expenses, #products, ...)
+ * korunur, override edilmez.
+ */
+window.safeNavigateToDashboard = function () {
+    var h = window.location.hash || '';
+    if (!h || h === '#login') {
+        window.location.hash = '#dashboard';
+    }
+};
+
 window.Router = {
     routes: {
         'dashboard':  { view: 'DashboardView',  title: 'Ana Sayfa' },
@@ -11,33 +38,61 @@ window.Router = {
         'raw-materials': { view: 'RawMaterialsView', title: 'Ham Maddeler' },
         'expenses':   { view: 'ExpensesView',   title: 'Giderler' },
         'stock':      { view: 'StockView',      title: 'Stok' },
-        'health':     { view: 'HealthView',      title: 'Saglik Raporu' },
-        'calendar':   { view: 'CalendarView',   title: 'Takvim & Görevler' },
-        'tasks':      { view: 'TasksView',      title: 'Görevler' },
-        'reports':    { view: 'ReportsView',     title: 'Raporlar' },
+        'health':     { view: 'HealthView',      title: 'Nabız' },
         'settings':   { view: 'SettingsView',    title: 'Ayarlar' }
     },
 
     currentViewInstance: null,
     _hashBound: false,
+    _initialized: false,
     _loginHandlers: null,
 
     init() {
+        // hashchange listener: yalnizca tek sefer bind et
         if (!this._hashBound) {
             window.addEventListener('hashchange', () => this.navigate());
             this._hashBound = true;
         }
+
+        /* ============================================================
+           RE-INIT GUARD
+           Router.init() yeniden cagrilirsa (focus, visibilitychange,
+           re-bootstrap vs.) ve kullanici ZATEN gecerli bir sayfadaysa
+           SAKIN navigate() tetikleme.
+        ============================================================ */
+        if (this._initialized) {
+            var existingHash = (window.location.hash || '').replace('#', '');
+            if (existingHash && existingHash !== 'login' && this.routes[existingHash]) {
+                if (window.__DEBUG__) console.log('[Router] re-init skipped, already on', existingHash);
+                return;
+            }
+        }
+
+        this._initialized = true;
         this.navigate();
     },
 
     navigate() {
-        const hash = (window.location.hash || '#dashboard').replace('#', '');
+        // EXTRA GUARD: hash dolu ve login degilse ve route gecerliyse
+        // re-entrant cagrilarda bu metodu tekrar tetiklemenin anlami yok.
+        // (init guard'i atlatan exotic cagrilar icin son savunma.)
+        var rawHash = window.location.hash || '';
+
+        if (!rawHash) {
+            // Bos hash -> guvenli fallback (asla override degil, ilk set)
+            if (window.STATE && window.STATE.authenticated) {
+                window.safeNavigateToDashboard();
+            } else {
+                window.location.hash = '#login';
+            }
+            return;
+        }
+
+        const hash = rawHash.replace('#', '');
         if(window.__DEBUG__)console.log('[Router] navigate →', hash);
 
         /* ============================================================
            AUTH GUARD
-           authenticated değilse login'e yönlendir.
-           login hash'inde ise login view render et.
         ============================================================ */
         if (!window.STATE.authenticated) {
             if (hash !== 'login') {
@@ -50,16 +105,18 @@ window.Router = {
             return;
         }
 
-        // Authenticated kullanıcı login sayfasına gelirse dashboard'a yönlendir
+        // Authenticated kullanici #login'da -> safe redirect
+        // (#login override edilebilir; safeNavigate izin verir.)
         if (hash === 'login') {
-            window.location.hash = '#dashboard';
+            window.safeNavigateToDashboard();
             return;
         }
 
         const route = this.routes[hash];
 
+        // Bilinmeyen route -> safe redirect
         if (!route) {
-            window.location.hash = '#dashboard';
+            window.safeNavigateToDashboard();
             return;
         }
 
@@ -97,19 +154,6 @@ window.Router = {
         const container = document.getElementById('viewContainer');
         if (!container) {
             console.error('[Router] #viewContainer bulunamadı');
-            return;
-        }
-
-        // Explicit tasks handler (diagnostik + garanti)
-        if (hash === 'tasks') {
-            if(window.__DEBUG__)console.log('[Router] rendering TasksView');
-            container.innerHTML = '';
-            if (window.TasksView && typeof window.TasksView.render === 'function') {
-                window.TasksView.render(container);
-                this.currentViewInstance = window.TasksView;
-                return;
-            }
-            console.error('[Router] window.TasksView tanımlı değil!');
             return;
         }
 
@@ -214,7 +258,6 @@ window.Router = {
     async handleLogin() {
         var emailEl = document.getElementById('loginEmail');
         var passwordEl = document.getElementById('loginPassword');
-        var errorEl = document.getElementById('loginError');
         var btnEl = document.getElementById('loginBtn');
 
         if (!emailEl || !passwordEl) return;
@@ -222,47 +265,56 @@ window.Router = {
         var email = emailEl.value.trim();
         var password = passwordEl.value;
 
+        // 1) Eski hatayi her denemede temizle
+        this.clearLoginError();
+
         if (!email || !password) {
             this.showLoginError('E-posta ve şifre zorunludur.');
             return;
         }
 
-        // Button'u disable et
         if (btnEl) {
             btnEl.disabled = true;
             btnEl.textContent = 'Giriş yapılıyor...';
         }
 
-        // Error'u gizle
-        if (errorEl) {
-            errorEl.style.display = 'none';
-        }
-
+        // 2) Login isteğini izole try/catch'te tut — sadece signInWithEmail
+        var result;
         try {
-            var result = await window.SupabaseService.signInWithEmail(email, password);
-
-            if (result.error) {
-                this.showLoginError(result.error.message || 'Giriş başarısız.');
-                if (btnEl) {
-                    btnEl.disabled = false;
-                    btnEl.textContent = 'Giriş Yap';
-                }
-                return;
-            }
-
-            // Login başarılı — cleanup login handlers
-            this._cleanupLoginHandlers();
-
-            // Bootstrap'i tekrar çalıştır
-            await window.AppBootstrap.afterLogin();
-
+            result = await window.SupabaseService.signInWithEmail(email, password);
         } catch (err) {
-            this.showLoginError('Beklenmeyen bir hata oluştu.');
-            if (btnEl) {
-                btnEl.disabled = false;
-                btnEl.textContent = 'Giriş Yap';
-            }
+            this.showLoginError('Bağlantı hatası. Tekrar deneyin.');
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Giriş Yap'; }
+            return;
         }
+
+        if (result && result.error) {
+            this.showLoginError((result.error && result.error.message) || 'Giriş başarısız.');
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Giriş Yap'; }
+            return;
+        }
+
+        // 3) SUCCESS — cleanup + safe redirect
+        //    (hash su an #login -> safeNavigate izin verir)
+        this._cleanupLoginHandlers();
+        window.STATE.authenticated = true;
+        window.safeNavigateToDashboard();
+
+        // 4) afterLogin arka planda — login basarisi UI'da bloklanmasin
+        if (window.AppBootstrap && typeof window.AppBootstrap.afterLogin === 'function') {
+            Promise.resolve()
+                .then(function () { return window.AppBootstrap.afterLogin(); })
+                .catch(function (e) {
+                    if (window.__DEBUG__) console.error('[Router] afterLogin failed:', e);
+                });
+        }
+    },
+
+    clearLoginError() {
+        var el = document.getElementById('loginError');
+        if (!el) return;
+        el.textContent = '';
+        el.style.display = 'none';
     },
 
     showLoginError(message) {

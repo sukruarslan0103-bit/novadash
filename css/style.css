@@ -211,27 +211,6 @@ body {
     letter-spacing: -0.02em;
 }
 
-.today-tasks {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.tasks-label {
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    font-weight: 600;
-}
-
-.tasks-count {
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: var(--primary-dark);
-    background: var(--primary-light);
-    padding: 4px 14px;
-    border-radius: 20px;
-}
-
 /* Health Score Ring */
 .health-score {
     display: flex;
@@ -239,18 +218,56 @@ body {
     gap: 12px;
 }
 
+/* === NABIZ NAVBAR BEACON === */
+.health-score {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 14px 5px 7px;
+    border-radius: 14px;
+    transition: background 0.18s ease;
+    cursor: pointer;
+    line-height: 1;
+}
+.health-score:hover {
+    background: rgba(15,23,42,0.025); /* daha sakin hover */
+}
+
 .health-ring {
     position: relative;
-    width: 44px; height: 44px;
+    width: 36px; height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: hbBreath 4s ease-in-out infinite;
+    will-change: transform;
 }
-
 .health-ring svg {
     transform: rotate(-90deg);
-    width: 44px; height: 44px;
+    width: 36px; height: 36px;
+    display: block;
 }
 
-.health-bg { fill: none; stroke: var(--border-light); stroke-width: 3; }
-.health-fill { fill: none; stroke: var(--primary); stroke-width: 3; stroke-linecap: round; }
+.health-bg { fill: none; stroke: #eef2f7; stroke-width: 2.6; }
+.health-fill {
+    fill: none;
+    stroke: #94a3b8; /* dynamic */
+    stroke-width: 2.6;
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.6s ease, stroke 0.3s ease;
+}
+
+.health-pulse-dot {
+    position: absolute;
+    top: 1px; right: 1px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #94a3b8;
+    box-shadow: 0 0 0 1.5px #ffffff;
+    transition: background 0.3s ease;
+}
+.health-pulse-dot.critical { animation: hbBeacon 1.6s ease-in-out infinite; }
 
 .health-value {
     position: absolute;
@@ -258,15 +275,39 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.85rem;
-    font-weight: 800;
-    color: var(--primary-dark);
+    font-size: 0.74rem;
+    font-weight: 900;
+    color: #0f172a;
+    letter-spacing: -0.025em;
+    font-feature-settings: "tnum" 1, "lnum" 1;
+    line-height: 1;
 }
 
+.health-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1;
+    min-width: 0;
+    gap: 0;
+}
 .health-label {
-    font-size: 0.88rem;
-    color: var(--text-secondary);
-    font-weight: 600;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #334155;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
+    line-height: 1.1;
+}
+
+@keyframes hbBreath { 0%,100% { transform: scale(1); } 50% { transform: scale(1.018); } }
+@keyframes hbBeacon {
+    0%,100% { box-shadow: 0 0 0 1.5px #ffffff, 0 0 0 0 currentColor; }
+    60%     { box-shadow: 0 0 0 1.5px #ffffff, 0 0 0 6px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .health-ring, .health-pulse-dot.critical { animation: none !important; }
 }
 
 /* ========================

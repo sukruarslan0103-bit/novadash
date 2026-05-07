@@ -134,6 +134,9 @@ window.ProductsView = {
             <div id="productsPanePurchase" style="display:none;"></div>
 
             <div id="productsPaneProducts">
+
+            <div id="productsInsightsPanel" style="margin:0 0 14px 0;"></div>
+
             <div class="page-header">
                 <h2 class="page-title">Ürünler</h2>
                 <button class="btn btn-primary" onclick="window.ProductsView.toggleForm()">
@@ -398,28 +401,34 @@ window.ProductsView = {
                         </div>
 
                         <!-- ADD ROW -->
-                        <div style="margin-top:22px; padding:16px; border:1.5px solid #e2e8f0; border-radius:14px; background:#f8fafc;">
-                            <div style="font-size:11px; font-weight:700; color:#334155; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:12px;">+ Hammadde Ekle</div>
-                            <div style="display:grid; grid-template-columns: 2fr 1fr auto; gap:10px; align-items:end;">
+                        <div style="margin-top:22px; padding:18px 20px; border:1.5px solid #e2e8f0; border-radius:16px; background:#f8fafc;">
+                            <div style="font-size:12px; font-weight:800; color:#0f172a; letter-spacing:0.04em; text-transform:uppercase; margin-bottom:14px;">+ Hammadde Ekle</div>
+                            <div style="display:grid; grid-template-columns: 2.4fr 1fr auto; gap:12px; align-items:end;">
                                 <div class="form-group" style="margin-bottom:0; position:relative;">
-                                    <label class="form-label" style="font-size:12px; color:#475569;">Hammadde</label>
-                                    <input type="text" class="form-input" id="productsRecipeSearch" placeholder="HM - yazmaya başla..." autocomplete="off"
-                                        oninput="window.ProductsView.recipeHandleSearch(this.value)"
-                                        onfocus="window.ProductsView.recipeShowDropdown(true)"
-                                        onkeydown="window.ProductsView.recipeSearchKey(event)">
+                                    <label class="form-label" style="font-size:12px; color:#475569; font-weight:600;">Hammadde Ara</label>
+                                    <div style="position:relative;">
+                                        <svg style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                        <input type="text" id="productsRecipeSearch" placeholder="Hammadde adı yazın..." autocomplete="off"
+                                            style="width:100%;padding:14px 14px 14px 40px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:14.5px;font-weight:600;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;outline:none;transition:border-color .15s, box-shadow .15s;"
+                                            onfocus="this.style.borderColor='#16a34a';this.style.boxShadow='0 0 0 4px rgba(22,163,74,0.12)';window.ProductsView.recipeShowDropdown(true)"
+                                            onblur="this.style.borderColor='#e2e8f0';this.style.boxShadow='none';"
+                                            oninput="window.ProductsView.recipeHandleSearch(this.value)"
+                                            onkeydown="window.ProductsView.recipeSearchKey(event)">
+                                    </div>
                                     <input type="hidden" id="productsRecipeAddMaterial" value="">
-                                    <div id="productsRecipeDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:12px; box-shadow:0 14px 40px rgba(15,23,42,0.18); max-height:340px; overflow-y:auto; z-index:40; margin-top:6px;"></div>
+                                    <div id="productsRecipeDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:14px; box-shadow:0 18px 50px rgba(15,23,42,0.20); max-height:380px; overflow-y:auto; z-index:40; margin-top:8px;"></div>
                                 </div>
                                 <div class="form-group" style="margin-bottom:0;">
-                                    <label class="form-label" style="font-size:12px; color:#475569;">Miktar</label>
-                                    <input type="number" class="form-input" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0"
+                                    <label class="form-label" style="font-size:12px; color:#475569; font-weight:600;">Miktar</label>
+                                    <input type="number" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0"
+                                        style="width:100%;padding:14px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:14.5px;font-weight:600;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;text-align:right;outline:none;"
                                         onkeydown="if(event.key==='Enter'){window.ProductsView.addRecipeLine();}">
                                 </div>
                                 <div>
-                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()" style="padding:11px 18px;">+ Ekle</button>
+                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()" style="padding:14px 20px;font-size:14px;font-weight:700;">+ Ekle</button>
                                 </div>
                             </div>
-                            <div id="productsRecipeAddHint" style="margin-top:8px; font-size:12px; color:#64748b;"></div>
+                            <div id="productsRecipeAddHint" style="margin-top:10px; font-size:12.5px; color:#64748b;"></div>
                         </div>
                     </div>
 
@@ -437,6 +446,13 @@ window.ProductsView = {
         if (!this._cacheEventsBound) {
             this._cacheEventsBound = true;
             window.addEventListener('products:updated', function () {
+                if (window.ViewCache) {
+                    window.ViewCache.invalidate('products-view:');
+                }
+            });
+            // Satis olunca da cache'i invalidate et — performanceMap (revenue/profit)
+            // guncel kalmali, insights canli rakamlardan beslensin.
+            window.addEventListener('sales:updated', function () {
                 if (window.ViewCache) {
                     window.ViewCache.invalidate('products-view:');
                 }
@@ -467,6 +483,8 @@ window.ProductsView = {
                     this.renderTable();
                     this.renderPagination();
                     this.initPurchase();
+                    // Cache hit'te de insights panel render edilsin
+                    this._renderProductInsights();
                     cacheUsed = true;
                 } catch (e) {
                     cacheUsed = false;
@@ -498,6 +516,12 @@ window.ProductsView = {
 
         var self = this;
         this._on(window, 'products:updated', async function () {
+            if (!self._isActive) return;
+            await self.loadProducts();
+            if (!self._isActive) return;
+        });
+        // Satis sonrasi performanceMap'in stale kalmamasi icin yeniden yukle.
+        this._on(window, 'sales:updated', async function () {
             if (!self._isActive) return;
             await self.loadProducts();
             if (!self._isActive) return;
@@ -637,7 +661,7 @@ window.ProductsView = {
 
             this.pagination.page = 1;
             this.applyFiltersAndRender();
-            this.setStatus(this.products.length + ' ürün DB\'den yüklendi.', 'success');
+            this._renderProductInsights();
         } catch (error) {
             tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata oluştu.</td></tr>';
             this.setStatus(this.getErrorMessage(error, 'Ürünler yüklenirken beklenmeyen hata oluştu.'), 'error');
@@ -1283,7 +1307,7 @@ window.ProductsView = {
                     { op: 'eq', column: 'is_deleted', value: false },
                     { op: 'eq', column: 'product_id', value: productId }
                 ],
-                select: 'id,product_id,raw_material_id,quantity,raw_material:raw_materials(id,name,unit,cost,is_deleted)',
+                select: 'id,product_id,raw_material_id,quantity,raw_material:raw_materials(id,name,unit,base_unit,cost,is_deleted)',
                 order: { column: 'created_at', asc: true }
             }),
             window.SupabaseService.query('raw_materials', {
@@ -1291,7 +1315,7 @@ window.ProductsView = {
                     { op: 'eq', column: 'is_deleted', value: false },
                     { op: 'eq', column: 'is_active', value: true }
                 ],
-                select: 'id,name,unit,cost',
+                select: 'id,name,unit,base_unit,cost',
                 order: { column: 'name', asc: true }
             })
         ]);
@@ -1372,7 +1396,9 @@ window.ProductsView = {
             total += lineCost;
 
             var name = self.escapeHtml(mat.name || '(Silinmiş hammadde)');
-            var unit = self.escapeHtml(mat.unit || '');
+            // base_unit kullanilir: contract'a gore quantity base_unit cinsinden saklanir.
+            // Eski kayit/UI uyumu icin fallback unit'e dusuyoruz.
+            var unit = self.escapeHtml(mat.base_unit || mat.unit || '');
             var qtyText = self.formatQuantity(quantity);
             var unitCostText = self.formatMoney(unitCost) + (unit ? ' / ' + unit : '');
             var lineCostText = self.formatMoney(lineCost);
@@ -1501,21 +1527,25 @@ window.ProductsView = {
 
         dropdown.innerHTML = available.map(function (m, idx) {
             var id = self.escapeHtml(m.id);
-            var name = self.escapeHtml(m.name || '');
-            var unit = self.escapeHtml(m.unit || '-');
-            var cost = self.formatMoney(m.cost);
+            var name = self.escapeHtml((m.name || '').toUpperCase());
+            // Recipe contract: quantity base_unit cinsinden saklanir.
+            // Dropdown'da kullaniciya base_unit + base_unit basina maliyet gosterilir.
+            var baseUnit = self.escapeHtml(m.base_unit || m.unit || '-');
+            var costNum  = Number(m.cost) || 0;
+            var costText = self.formatMoney(costNum) + ' / ' + baseUnit;
             var isSel = String(m.id) === String(selectedId);
-            var bg = isSel ? '#ecfdf5' : (idx === 0 && !selectedId ? '#f8fafc' : '#ffffff');
+            var bg = isSel ? '#ecfdf5' : '#ffffff';
             return '<div data-rmid="' + id + '" onclick="window.ProductsView.recipeSelectMaterial(\'' + id + '\')" ' +
-                'style="padding:12px 14px; cursor:pointer; border-bottom:1px solid #f1f5f9; background:' + bg + '; transition:background 0.1s;" ' +
+                'style="padding:14px 16px; cursor:pointer; border-bottom:1px solid #f1f5f9; background:' + bg + '; transition:background 0.1s;" ' +
                 'onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'' + bg + '\'">' +
-                '<div style="font-weight:700; color:#0f172a; font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:8px;">' +
-                    '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">HM - ' + name + (isSel ? ' ✓' : '') + '</span>' +
+                '<div style="font-weight:800; color:#0f172a; font-size:14px; display:flex; align-items:center; gap:8px;">' +
+                    '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + name + '</span>' +
+                    (isSel ? '<span style="color:#16a34a;font-size:13px;">✓</span>' : '') +
                 '</div>' +
-                '<div style="font-size:11px; color:#64748b; margin-top:3px; display:flex; gap:8px;">' +
-                    '<span style="font-weight:600; color:#475569;">' + unit + '</span>' +
-                    '<span style="color:#cbd5e1;">•</span>' +
-                    '<span style="font-weight:700; color:#15803d;">' + cost + '</span>' +
+                '<div style="font-size:12px; color:#64748b; margin-top:4px; display:flex; gap:8px; align-items:center;">' +
+                    '<span style="font-weight:700; color:#0f172a;">' + baseUnit + '</span>' +
+                    '<span style="color:#cbd5e1;">·</span>' +
+                    '<span style="font-weight:700; color:#15803d;">' + costText + '</span>' +
                 '</div>' +
             '</div>';
         }).join('');
@@ -1547,10 +1577,20 @@ window.ProductsView = {
 
         var hidden = document.getElementById('productsRecipeAddMaterial');
         var search = document.getElementById('productsRecipeSearch');
-        var qty = document.getElementById('productsRecipeAddQty');
+        var qty    = document.getElementById('productsRecipeAddQty');
+        var hint   = document.getElementById('productsRecipeAddHint');
 
         if (hidden) hidden.value = m.id;
-        if (search) search.value = 'HM - ' + (m.name || '');
+        if (search) search.value = (m.name || '').toUpperCase();
+
+        // Birim hint: kullanıcıya base_unit'i net göster
+        var baseUnit = m.base_unit || m.unit || '';
+        if (hint && baseUnit) {
+            hint.innerHTML = 'Miktarı <b style="color:#0f172a;">' + this.escapeHtml(baseUnit) + '</b> cinsinden girin.';
+        }
+        if (qty && baseUnit) {
+            qty.placeholder = 'Örn: 100 ' + baseUnit;
+        }
 
         this.recipeShowDropdown(false);
         if (qty) qty.focus();
@@ -2357,7 +2397,7 @@ window.ProductsView = {
                     <thead>
                         <tr>
                             <th>Ad</th>
-                            <th>Birim</th>
+                            <th>Alış / Hesap</th>
                             <th style="text-align:right;">Birim Maliyet</th>
                             <th style="width:260px;">İşlemler</th>
                         </tr>
@@ -2444,7 +2484,7 @@ window.ProductsView = {
             var result = await window.SupabaseService.query('raw_materials', {
                 filters: [{ op: 'eq', column: 'is_deleted', value: false }],
                 order: { column: 'name', asc: true },
-                select: 'id,name,unit,cost,vat_rate,is_active,created_at'
+                select: 'id,name,unit,base_unit,cost,vat_rate,is_active,created_at'
             });
             if (!this._isActive) return;
 
@@ -2456,7 +2496,6 @@ window.ProductsView = {
 
             this.rmState.materials = Array.isArray(result.data) ? result.data : [];
             this.rmRenderTable();
-            this.rmSetStatus(this.rmState.materials.length + ' ham madde yüklendi.', 'success');
         } catch (err) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata.</td></tr>';
             this.rmSetStatus(this.getErrorMessage(err, 'Beklenmeyen hata.'), 'error');
@@ -2489,8 +2528,10 @@ window.ProductsView = {
                 var id = self.escapeHtml(m.id);
                 return '<tr>' +
                     '<td style="font-weight:600;">' + self.escapeHtml(m.name || '-') + '</td>' +
-                    '<td>' + self.escapeHtml(m.unit || '-') + '</td>' +
-                    '<td style="text-align:right; font-weight:700;">' + self.formatMoney(m.cost) + '</td>' +
+                    '<td>' + self.escapeHtml(m.unit || '-') +
+                        ((m.base_unit && m.base_unit !== m.unit) ? ' <span style="color:#94a3b8;">→</span> <span style="font-weight:700;color:#475569;">' + self.escapeHtml(m.base_unit) + '</span>' : '') +
+                    '</td>' +
+                    '<td style="text-align:right; font-weight:700;">' + self.formatMoney(m.cost) + ' / ' + self.escapeHtml(m.base_unit || m.unit || '-') + '</td>' +
                     '<td><div style="display:flex; gap:6px; flex-wrap:wrap;">' +
                         '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.rmViewHistory(\'' + id + '\')">👁 Görüntüle</button>' +
                         '<button class="btn btn-secondary" style="padding:6px 10px; font-size:12px;" onclick="window.ProductsView.rmEdit(\'' + id + '\')">Düzenle</button>' +
@@ -2565,7 +2606,14 @@ window.ProductsView = {
         var overlay = document.getElementById('rmHistoryOverlay');
         var sub = document.getElementById('rmHistorySubtitle');
         if (overlay) overlay.style.display = 'flex';
-        if (sub) sub.textContent = 'HM - ' + (m.name || '') + '  ·  Birim: ' + (m.unit || '-') + '  ·  Güncel Maliyet: ' + this.formatMoney(m.cost);
+        if (sub) {
+            var purUnit = m.unit || '-';
+            var basUnit = m.base_unit || m.unit || '-';
+            sub.textContent = 'HM - ' + (m.name || '') +
+                '  ·  Alış: ' + purUnit +
+                '  ·  Hesap: ' + basUnit +
+                '  ·  Maliyet: ' + this.formatMoney(m.cost) + ' / ' + basUnit;
+        }
 
         this.rmClearHistoryFilter(true);
         await this.rmLoadHistory(m.id);
@@ -2845,6 +2893,354 @@ window.ProductsView = {
     },
 
     /* ============================================================
+       PRODUCT INTELLIGENCE PANEL
+       Real-data insights: margin, cost trends, recommendations.
+       Veri yoksa: açıkça belirtilir, fake yok.
+       ============================================================ */
+    _renderProductInsights: async function () {
+        var host = document.getElementById('productsInsightsPanel');
+        if (!host) return;
+
+        var products = (this.products || []).filter(function (p) {
+            return p && !p.is_deleted;
+        });
+
+        if (!products.length) {
+            host.innerHTML = '';
+            return;
+        }
+
+        // Skeleton — loading state
+        host.innerHTML = this._insightsSkeletonHtml();
+
+        var self = this;
+
+        // === ENRICH: products + performanceMap (gercek satis/kar verisi) ===
+        var enriched = products
+            .filter(function (p) { return Number(p.price || 0) > 0; })
+            .map(function (p) {
+                var perf = self.performanceMap ? (self.performanceMap.get(String(p.id)) || {}) : {};
+                var price = Number(p.price || 0);
+                var cost  = Number(p.cost || 0);
+                var margin = price > 0 ? ((price - cost) / price) * 100 : 0;
+                return {
+                    id:       p.id,
+                    name:     p.name,
+                    price:    price,
+                    cost:     cost,
+                    margin:   margin,
+                    quantity: Number(perf.quantity || 0),
+                    revenue:  Number(perf.revenue  || 0),
+                    profit:   Number(perf.estimated_profit || 0)
+                };
+            });
+
+        // === EN GUCLU URUNLER: gercek kar (estimated_profit) DESC ===
+        // Yalnizca bu ay satis olmus + cost > 0 olanlar; tie-breaker revenue.
+        var highMargin = enriched
+            .filter(function (p) { return p.quantity > 0 && p.cost > 0; })
+            .sort(function (a, b) {
+                if (b.profit !== a.profit) return b.profit - a.profit;
+                return b.revenue - a.revenue;
+            })
+            .slice(0, 5);
+
+        // === EN DUSUK KARLI: dusuk margin + en az 1 satis (anlamli kayip) ===
+        var lowMargin = enriched
+            .filter(function (p) { return p.quantity > 0 && p.cost > 0; })
+            .sort(function (a, b) {
+                if (a.margin !== b.margin) return a.margin - b.margin;
+                return b.quantity - a.quantity; // ayni margin → cok satan once
+            })
+            .slice(0, 5);
+
+        // === HAMMADDE FIYAT TRENDI ===
+        var rmTrend = await this._computeRawMaterialPriceTrend();
+        var trendingRmIds = {};
+        rmTrend.forEach(function (t) { if (t.rmId) trendingRmIds[String(t.rmId)] = true; });
+
+        // === PRODUCT_RECIPES MAPPING (urun -> rm seti) ===
+        // Sadece hangi urunlerin hangi rm'leri kullandigini bilmek icin minimal fetch.
+        // recipeState varsa kullan, yoksa tek seferlik fetch.
+        var productToRm = {};  // { product_id: Set<rm_id> }
+        try {
+            var recRes = await window.SupabaseService.query('product_recipes', {
+                filters: [{ op: 'eq', column: 'is_deleted', value: false }],
+                select: 'product_id,raw_material_id'
+            });
+            if (recRes && Array.isArray(recRes.data)) {
+                recRes.data.forEach(function (r) {
+                    if (!r.product_id || !r.raw_material_id) return;
+                    var key = String(r.product_id);
+                    if (!productToRm[key]) productToRm[key] = {};
+                    productToRm[key][String(r.raw_material_id)] = true;
+                });
+            }
+        } catch (e) { /* noop */ }
+
+        // === FIYAT ARTIRMA ONERILERI ===
+        // Tetikleyici (OR):
+        //   a) margin < %25 (acik kayip)
+        //   b) margin < %35 + recipe'sinde son 60 gun maliyet artisi yasamis rm var (risk altinda)
+        // Sıralama: revenue DESC (yuksek satis hacmi → onerinin etkisi buyuk)
+        // Hedef: %35 margin → gerekli zam %.
+        var suggestions = enriched
+            .filter(function (p) {
+                if (!(p.cost > 0)) return false;
+                if (p.margin < 25) return true;
+                if (p.margin < 35) {
+                    var rms = productToRm[String(p.id)];
+                    if (!rms) return false;
+                    var hit = false;
+                    Object.keys(rms).some(function (rmId) {
+                        if (trendingRmIds[rmId]) { hit = true; return true; }
+                        return false;
+                    });
+                    return hit;
+                }
+                return false;
+            })
+            .sort(function (a, b) {
+                if (b.revenue !== a.revenue) return b.revenue - a.revenue; // satis hacmi onceligi
+                return a.margin - b.margin;                                 // sonra dusuk margin
+            })
+            .slice(0, 5)
+            .map(function (p) {
+                var targetPrice = p.cost / (1 - 0.35); // hedef margin %35
+                var raise = p.price > 0 ? ((targetPrice - p.price) / p.price) * 100 : 0;
+                if (raise < 3) raise = 3;
+                if (raise > 30) raise = 30;
+                return { name: p.name, raisePct: Math.round(raise), currentMargin: p.margin };
+            });
+
+        host.innerHTML = this._insightsHtml({
+            rmTrend: rmTrend,
+            suggestions: suggestions,
+            lowMargin: lowMargin,
+            highMargin: highMargin
+        });
+    },
+
+    _computeRawMaterialPriceTrend: async function () {
+        try {
+            if (!window.SupabaseService || typeof window.SupabaseService.query !== 'function') return [];
+
+            // ============================================================
+            // YENI MANTIK — son alis vs onceki alis (kullanici beklentisi)
+            //   1) created_at DESC ile son alis kayitlarini cek
+            //   2) Her hammadde icin ilk 2 (latest, previous) sakla
+            //   3) base_unit_cost uzerinden % fark hesapla (mixed unit-safe)
+            //   4) >=%5 artislari sirala, top 5
+            // ============================================================
+            var res = await window.SupabaseService.query('purchase_items', {
+                filters: [
+                    { op: 'eq', column: 'is_deleted', value: false }
+                ],
+                order: { column: 'created_at', asc: false },
+                select: 'raw_material_id,created_at,base_unit_cost'
+            });
+
+            if (!res || res.error || !Array.isArray(res.data) || !res.data.length) return [];
+
+            // Per-rm en son 2 satir (DESC siralama sayesinde ilk 2 = latest, previous)
+            var pair = {}; // { rmId: [latest, previous] }
+            res.data.forEach(function (it) {
+                var rmId = it.raw_material_id;
+                if (!rmId) return;
+                var cost = Number(it.base_unit_cost) || 0;
+                if (cost <= 0) return;
+                if (!pair[rmId]) pair[rmId] = [];
+                if (pair[rmId].length < 2) {
+                    pair[rmId].push({ cost: cost, created_at: it.created_at });
+                }
+            });
+
+            // RM isim + birim cozumu (rmState varsa kullan, yoksa fetch)
+            var rmInfoMap = {}; // { id: {name, unit, base_unit} }
+            var rmList = (this.rmState && this.rmState.materials) || [];
+            rmList.forEach(function (m) {
+                rmInfoMap[m.id] = { name: m.name, unit: m.unit, base_unit: m.base_unit };
+            });
+
+            var rmIds = Object.keys(pair);
+            var missingIds = rmIds.filter(function (id) {
+                var info = rmInfoMap[id];
+                return !info || !info.name || !info.base_unit;
+            });
+            if (missingIds.length) {
+                try {
+                    var nameRes = await window.SupabaseService.query('raw_materials', {
+                        filters: [{ op: 'in', column: 'id', value: missingIds }],
+                        select: 'id,name,unit,base_unit'
+                    });
+                    (nameRes && nameRes.data || []).forEach(function (m) {
+                        rmInfoMap[m.id] = { name: m.name, unit: m.unit, base_unit: m.base_unit };
+                    });
+                } catch (e) { /* noop */ }
+            }
+
+            var self = this;
+            var trends = rmIds.map(function (rmId) {
+                var arr = pair[rmId];
+                if (!arr || arr.length < 2) return null; // karsilastirma icin 2 alis sart
+                var latest   = arr[0];
+                var previous = arr[1];
+                if (!latest || !previous) return null;
+                if (!(previous.cost > 0)) return null;
+
+                var pct = ((latest.cost - previous.cost) / previous.cost) * 100;
+                if (pct < 5) return null; // sadece anlamli artislar (>=%5)
+
+                var info = rmInfoMap[rmId] || {};
+                var purchaseUnit = info.unit || info.base_unit || '';
+                var baseUnit     = info.base_unit || info.unit || '';
+
+                // Purchase unit cost (display) — base_unit_cost'tan kullanicinin gordugu birime cevir
+                var fromPurchase = self._puPurchaseUnitCost(previous.cost, purchaseUnit, baseUnit);
+                var toPurchase   = self._puPurchaseUnitCost(latest.cost,   purchaseUnit, baseUnit);
+
+                return {
+                    rmId: rmId,
+                    name: info.name || 'Hammadde',
+                    pct: Math.round(pct),
+                    // base_unit cost'lar (ham veri)
+                    fromCost: previous.cost,
+                    toCost:   latest.cost,
+                    // purchase unit cost'lar (display icin)
+                    fromCostPurchase: fromPurchase,
+                    toCostPurchase:   toPurchase,
+                    purchaseUnit:     purchaseUnit
+                };
+            }).filter(Boolean);
+
+            trends.sort(function (a, b) { return b.pct - a.pct; });
+            return trends.slice(0, 5);
+        } catch (e) {
+            return [];
+        }
+    },
+
+    _insightsSkeletonHtml: function () {
+        var skel = function () {
+            return '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;min-height:120px;">' +
+                '<div style="height:10px;width:130px;background:#f1f5f9;border-radius:6px;margin-bottom:10px;"></div>' +
+                '<div style="height:8px;width:90%;background:#f1f5f9;border-radius:6px;margin-bottom:6px;"></div>' +
+                '<div style="height:8px;width:70%;background:#f1f5f9;border-radius:6px;"></div>' +
+            '</div>';
+        };
+        return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">' +
+            skel() + skel() + skel() + skel() +
+        '</div>';
+    },
+
+    _insightsHtml: function (data) {
+        var fmt = window.Formatters;
+        var c   = function (v) { return (fmt && fmt.currency) ? fmt.currency(v) : ('₺' + Number(v||0).toLocaleString('tr-TR')); };
+
+        var card = function (opts) {
+            var icon = opts.icon || '';
+            var title = opts.title;
+            var color = opts.color || '#0f172a';
+            var rows = opts.rows || [];
+            var empty = opts.empty || 'Veri yok';
+
+            var rowsHtml = rows.length
+                ? rows.map(function (r) {
+                    var topLine =
+                        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
+                            '<span style="font-size:12.5px;color:#0f172a;font-weight:600;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + r.label + '</span>' +
+                            '<span style="font-size:12.5px;font-weight:700;color:' + (r.valueColor || color) + ';">' + r.value + '</span>' +
+                        '</div>';
+                    var subLine = r.subtitle
+                        ? '<div style="margin-top:2px;font-size:11px;color:#94a3b8;font-weight:500;">' + r.subtitle + '</div>'
+                        : '';
+                    return '<div style="padding:6px 0;border-bottom:1px solid #f1f5f9;">' + topLine + subLine + '</div>';
+                }).join('')
+                : '<div style="padding:14px 0;text-align:center;color:#94a3b8;font-size:12.5px;font-weight:600;">' + empty + '</div>';
+
+            return '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;">' +
+                '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:7px;background:' + (opts.iconBg || '#f1f5f9') + ';color:' + color + ';">' + icon + '</span>' +
+                    '<span style="font-size:12.5px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">' + title + '</span>' +
+                '</div>' +
+                '<div style="margin-top:2px;">' + rowsHtml + '</div>' +
+            '</div>';
+        };
+
+        var iconUp   = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>';
+        var iconBolt = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>';
+        var iconDown = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>';
+        var iconStar = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+
+        var moneyShort = function (v) {
+            var n = Number(v) || 0;
+            return '₺' + n.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+        };
+
+        var rmTrendCard = card({
+            title: 'En Çok Artan Hammaddeler',
+            icon:  iconUp,
+            color: '#b45309',
+            iconBg:'#fef3c7',
+            empty: 'Son alışlarda anlamlı fiyat artışı yok',
+            rows: data.rmTrend.map(function (t) {
+                var unit = t.purchaseUnit ? ' / ' + t.purchaseUnit : '';
+                var hasPrices = (t.fromCostPurchase > 0 && t.toCostPurchase > 0);
+                var sub = hasPrices
+                    ? (moneyShort(t.fromCostPurchase) + unit + ' → ' + moneyShort(t.toCostPurchase) + unit)
+                    : '';
+                return {
+                    label:      t.name,
+                    value:      '+' + t.pct + '%',
+                    valueColor: '#b45309',
+                    subtitle:   sub
+                };
+            })
+        });
+
+        var sugCard = card({
+            title: 'Fiyat Artırma Önerileri',
+            icon:  iconBolt,
+            color: '#0ea5e9',
+            iconBg:'#e0f2fe',
+            empty: 'Şu an öneri gerektiren ürün yok',
+            rows: data.suggestions.map(function (s) {
+                return { label: s.name, value: '+' + s.raisePct + '%', valueColor: '#0369a1' };
+            })
+        });
+
+        var lowCard = card({
+            title: 'En Düşük Karlı Ürünler',
+            icon:  iconDown,
+            color: '#dc2626',
+            iconBg:'#fee2e2',
+            empty: 'Maliyet verisi olan ürün yok',
+            rows: data.lowMargin.map(function (p) {
+                return { label: p.name, value: '%' + p.margin.toFixed(0), valueColor: '#dc2626' };
+            })
+        });
+
+        var highCard = card({
+            title: 'En Çok Kazandıranlar',
+            icon:  iconStar,
+            color: '#16a34a',
+            iconBg:'#dcfce7',
+            empty: 'Maliyet verisi olan ürün yok',
+            rows: data.highMargin.map(function (p) {
+                return { label: p.name, value: '%' + p.margin.toFixed(0), valueColor: '#16a34a' };
+            })
+        });
+
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z"/></svg>' +
+                '<span style="font-size:12.5px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">Akıllı İçgörüler</span>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">' +
+                rmTrendCard + sugCard + lowCard + highCard +
+            '</div>';
+    },
+
+    /* ============================================================
        ALIŞ TAB
        ============================================================ */
     _renderPurchasePane: function () {
@@ -2858,16 +3254,26 @@ window.ProductsView = {
         var dateStr = today.toLocaleDateString('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
 
         pane.innerHTML = `
-            <div class="page-header">
-                <h2 class="page-title">Alış Faturası</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:4px 0 14px 0;">
+                <div>
+                    <h2 style="margin:0 0 6px 0;font-size:26px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;">Alış Faturası</h2>
+                    <p style="margin:0;color:#64748b;font-size:13.5px;">Yeni alış faturası oluşturun.</p>
+                </div>
+                <button id="puToggleFormBtn" type="button" style="
+                    border:none;background:#0f172a;color:#fff;padding:11px 18px;
+                    border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                    display:inline-flex;align-items:center;gap:8px;
+                ">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span id="puToggleFormBtnLabel">Yeni Alış Faturası</span>
+                </button>
             </div>
 
-            <!-- INVOICE CARD -->
-            <div style="margin-top:12px; background:#fff; border:1px solid #e2e8f0; border-radius:18px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,0.04);">
+            <!-- INVOICE CARD (accordion) -->
+            <div id="puInvoiceCard" style="display:none; margin-top:8px; background:#fff; border:1px solid #e2e8f0; border-radius:18px; overflow:hidden; box-shadow:0 1px 3px rgba(15,23,42,0.04);">
                 <div style="padding:20px 24px; background:linear-gradient(135deg,#0f172a,#1e293b); color:#fff; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
                     <div>
                         <div style="font-size:11px; font-weight:600; color:#94a3b8; letter-spacing:0.1em;">ALIŞ FATURASI</div>
-                        <div style="font-size:20px; font-weight:800; margin-top:4px;">Taslak</div>
                     </div>
                     <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
                         <!-- KDV TOGGLE -->
@@ -2988,6 +3394,7 @@ window.ProductsView = {
 
                 <!-- ACTIONS -->
                 <div style="padding:16px 24px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
+                    <button class="btn btn-secondary" type="button" onclick="window.ProductsView.puToggleForm()" style="border:1px solid #e5e7eb;background:#fff;color:#475569;">Formu Kapat</button>
                     <button class="btn btn-secondary" type="button" onclick="window.ProductsView.puClearAll()">Temizle</button>
                     <button class="btn btn-primary" type="button" id="puSaveAllBtn" onclick="window.ProductsView.puSaveAll()" style="min-width:160px;">Faturayı Kaydet</button>
                 </div>
@@ -3076,6 +3483,27 @@ window.ProductsView = {
         if (puDateEl && !puDateEl.value) {
             puDateEl.value = new Date().toISOString().slice(0, 10);
         }
+
+        // Accordion toggle button
+        var toggleBtn = document.getElementById('puToggleFormBtn');
+        if (toggleBtn) {
+            toggleBtn.onclick = function () { window.ProductsView.puToggleForm(); };
+        }
+    },
+
+    puToggleForm: function () {
+        var card  = document.getElementById('puInvoiceCard');
+        var label = document.getElementById('puToggleFormBtnLabel');
+        var topBtn = document.getElementById('puToggleFormBtn');
+        if (!card) return;
+        var willOpen = (card.style.display === 'none' || !card.style.display);
+        card.style.display = willOpen ? 'block' : 'none';
+        if (label) label.textContent = 'Yeni Alış Faturası';
+        // Form acikken ust butonu gizle, kapaliyken goster
+        if (topBtn) topBtn.style.display = willOpen ? 'none' : 'inline-flex';
+        if (willOpen) {
+            try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* noop */ }
+        }
     },
 
     loadPurchaseTab: async function () {
@@ -3090,7 +3518,7 @@ window.ProductsView = {
             var result = await window.SupabaseService.query('raw_materials', {
                 filters: [{ op: 'eq', column: 'is_deleted', value: false }],
                 order: { column: 'name', asc: true },
-                select: 'id,name,unit,cost,vat_rate'
+                select: 'id,name,unit,base_unit,cost,vat_rate'
             });
             if (!this._isActive) return;
             if (result.error) {
@@ -3433,7 +3861,8 @@ window.ProductsView = {
                             : (inv.net_total != null ? Number(inv.net_total)
                             : (inv.total != null ? Number(inv.total) : 0));
 
-            // Detay butonu icin invoice_no'yu data attribute olarak gec
+            // Tum aksiyonlar invoice_no uzerinden — RPC inv.invoice_id donmuyor.
+            // Düzenle: invoice_no -> items fetch -> note JSON parse -> invoice_id resolve
             var invNoSafe = self.escapeHtml(String(inv.invoice_no != null ? inv.invoice_no : ''));
 
             return '<tr>' +
@@ -3445,12 +3874,270 @@ window.ProductsView = {
                 '<td style="text-align:right; font-weight:700;">' + itemCount + '</td>' +
                 '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(totalAmount) + '</td>' +
                 '<td style="text-align:right; white-space:nowrap;">' +
-                    '<button class="btn btn-secondary" style="padding:5px 11px; font-size:12px;" onclick="window.ProductsView.puShowInvoiceDetail(\'' + invNoSafe + '\')">Detay</button>' +
+                    '<div style="display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">' +
+                        '<button type="button" style="padding:5px 11px;font-size:12px;border:1px solid #e5e7eb;background:#fff;color:#0f172a;border-radius:8px;font-weight:600;cursor:pointer;" onclick="window.ProductsView.puShowInvoiceDetail(\'' + invNoSafe + '\')">Detay</button>' +
+                        '<button type="button" style="padding:5px 11px;font-size:12px;border:1px solid #e5e7eb;background:#fff;color:#0f172a;border-radius:8px;font-weight:600;cursor:pointer;" onclick="window.ProductsView.puEditInvoiceByNo(\'' + invNoSafe + '\')">Düzenle</button>' +
+                        '<button type="button" style="padding:5px 11px;font-size:12px;border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:8px;font-weight:600;cursor:pointer;" onclick="window.ProductsView.puConfirmDeleteInvoice(\'' + invNoSafe + '\')">Sil</button>' +
+                    '</div>' +
                 '</td>' +
             '</tr>';
         }).join('');
 
         this._puRenderPagination(totalPages);
+    },
+
+    /* ============================================================
+       INVOICE EDIT — son alıştan düzenle butonu
+       RPC `get_purchase_invoices_paginated` invoice_id donmuyor;
+       invoice_no ile fetch + group → invoice_id resolve → puEditItem.
+       ============================================================ */
+    puEditInvoiceByNo: async function (invoiceNo) {
+        console.log('[EDIT_CLICK] invoice_no =', invoiceNo, '| typeof:', typeof invoiceNo);
+
+        if (!invoiceNo) {
+            console.log('[ERROR] invoice_no boş — fonksiyon erken çıkış');
+            return;
+        }
+
+        var client = window.SupabaseService && typeof window.SupabaseService.getClient === 'function'
+            ? window.SupabaseService.getClient() : null;
+        if (!client) {
+            console.log('[ERROR] Supabase client yok');
+            this.puSetStatus('Client yüklenemedi.', 'error');
+            return;
+        }
+
+        try {
+            var queryNum = Number(invoiceNo);
+            console.log('[FETCH_QUERY] invoice_no =', queryNum, '(Number cast)');
+
+            var resp = await client
+                .from('purchase_items')
+                .select('id,quantity,unit,unit_cost,line_total,vat_rate,discount_rate,invoice_no,invoice_date,note,created_at,general_discount_amount,general_discount_type,raw_material_id,raw_material:raw_materials(id,name,unit,base_unit)')
+                .eq('invoice_no', queryNum)
+                .eq('is_deleted', false)
+                .order('created_at', { ascending: true });
+
+            console.log('[FETCH_RESPONSE] error:', resp.error || 'none', '| data type:', Array.isArray(resp.data) ? 'array' : typeof resp.data);
+
+            if (resp.error) {
+                console.log('[ERROR] fetch hatası:', resp.error);
+                this.puSetStatus(this.getErrorMessage(resp.error, 'Düzenleme için veri alınamadı.'), 'error');
+                return;
+            }
+
+            var rows = Array.isArray(resp.data) ? resp.data : [];
+            console.log('[FETCH_ITEMS] count =', rows.length);
+            if (rows.length) {
+                console.log('[FETCH_ITEMS_SAMPLE]', {
+                    id: rows[0].id,
+                    invoice_no: rows[0].invoice_no,
+                    raw_material_id: rows[0].raw_material_id,
+                    quantity: rows[0].quantity,
+                    unit: rows[0].unit,
+                    unit_cost: rows[0].unit_cost,
+                    line_total: rows[0].line_total,
+                    note: rows[0].note,
+                    note_type: typeof rows[0].note,
+                    raw_material: rows[0].raw_material
+                });
+            }
+
+            if (!rows.length) {
+                console.log('[ERROR] 0 row geldi — RLS/tenant/invoice_no mismatch ihtimali');
+                this.puSetStatus('Bu faturaya ait satır bulunamadı.', 'error');
+                return;
+            }
+
+            // ============================================================
+            // SINGLE SYNTHETIC INVOICE — invoice_no zaten benzersiz, tum
+            // rows tek faturanin satirlari. _puGroupByInvoice legacy
+            // (note.invoice_id yok) durumda her itemi ayri grup yapiyor;
+            // edit icin TUM satirlari tek inv.items altinda topla.
+            // ============================================================
+            var self = this;
+            var resolvedInvoiceId = null;
+            var supplier  = null;
+            var description = null;
+            var earliestCreatedAt = null;
+            var generalDiscount   = null;
+
+            rows.forEach(function (it) {
+                var meta = self._puParseNote(it.note) || {};
+                if (!resolvedInvoiceId && meta.invoice_id) resolvedInvoiceId = meta.invoice_id;
+                if (!supplier && meta.supplier) supplier = meta.supplier;
+                if (!description && meta.description) description = meta.description;
+                if (it.created_at) {
+                    if (!earliestCreatedAt || new Date(it.created_at) < new Date(earliestCreatedAt)) {
+                        earliestCreatedAt = it.created_at;
+                    }
+                }
+                if (!generalDiscount) {
+                    var colAmt = Number(it.general_discount_amount);
+                    if (Number.isFinite(colAmt) && colAmt > 0) {
+                        generalDiscount = {
+                            type: it.general_discount_type === 'percent' ? 'percent' : 'amount',
+                            value: colAmt
+                        };
+                    } else if (meta.general_discount && Number(meta.general_discount.value) > 0) {
+                        generalDiscount = {
+                            type: meta.general_discount.type === 'percent' ? 'percent' : 'amount',
+                            value: Number(meta.general_discount.value) || 0
+                        };
+                    }
+                }
+            });
+
+            var isLegacy = !resolvedInvoiceId;
+            var syntheticId = resolvedInvoiceId || ('inv_no:' + String(invoiceNo));
+
+            var inv = {
+                invoice_id: syntheticId,
+                invoice_no: Number(invoiceNo),
+                is_legacy: isLegacy,
+                supplier: supplier,
+                description: description,
+                created_at: earliestCreatedAt,
+                items: rows,
+                total: rows.reduce(function (s, r) { return s + (Number(r.line_total) || 0); }, 0),
+                count: rows.length,
+                general_discount: generalDiscount
+            };
+
+            console.log('[SYNTH_INVOICE] invoice_id =', JSON.stringify(syntheticId), '| typeof:', typeof syntheticId, '| is_legacy:', isLegacy, '| items =', inv.items.length, '| resolvedFromNote:', !!resolvedInvoiceId);
+            console.log('[SYNTH_INVOICE.invoice_id_in_inv]', JSON.stringify(inv.invoice_id), '| typeof:', typeof inv.invoice_id);
+
+            // STATE INSERTION
+            var existing = (this.purchaseState.purchases || []);
+            console.log('[BEFORE_PUSH] existing.length =', existing.length);
+            console.log('[BEFORE_PUSH] existing ids =', existing.map(function (x) { return x && x.invoice_id; }));
+            console.log('[BEFORE_PUSH] purchaseState ref check:', this.purchaseState === window.ProductsView.purchaseState);
+
+            var hasIt = existing.some(function (x) { return String(x.invoice_id) === String(syntheticId); });
+            this.purchaseState.purchases = hasIt ? existing : existing.concat([inv]);
+
+            console.log('[STATE_PUSH] purchases length =', this.purchaseState.purchases.length, '| hasIt:', hasIt);
+            console.log('[STATE_PUSH] all invoice_ids =', this.purchaseState.purchases.map(function (x) { return x && x.invoice_id; }));
+            console.log('[STATE_PUSH] last item =', this.purchaseState.purchases[this.purchaseState.purchases.length - 1]);
+
+            // Sanity: _puFindInvoice ile sentetik invoice'ı bulabiliyor muyuz?
+            var foundCheck = this._puFindInvoice(syntheticId);
+            console.log('[FIND_INVOICE] looking for:', JSON.stringify(syntheticId));
+            console.log('[FIND_INVOICE] found =', !!foundCheck, '| matched_id:', foundCheck && foundCheck.invoice_id, '| matched_items:', foundCheck && foundCheck.items && foundCheck.items.length);
+
+            // FALLBACK: _puFindInvoice basarisiz ise direkt inv referansini stash et
+            // ve puEditItem'i bypass'la calistir.
+            if (!foundCheck) {
+                console.log('[FALLBACK] _puFindInvoice basarisiz; direkt inv referansi ile devam edilecek');
+                this.purchaseState._editStash = inv;
+            } else {
+                this.purchaseState._editStash = null;
+            }
+
+            // Form kapaliysa ac
+            var card = document.getElementById('puInvoiceCard');
+            if (card && (card.style.display === 'none' || !card.style.display)) {
+                console.log('[FORM_TOGGLE] Form kapali idi, aciliyor');
+                this.puToggleForm();
+            } else {
+                console.log('[FORM_STATE] Form zaten acik');
+            }
+
+            // EditItem öncesi state ölç
+            console.log('[BEFORE_EDIT_ITEM] purchaseState.lines (önceki) =', (this.purchaseState.lines || []).length);
+
+            this.puEditItem(syntheticId);
+
+            // EditItem sonrası state + DOM kontrol
+            console.log('[AFTER_EDIT_ITEM] purchaseState.lines =', (this.purchaseState.lines || []).length);
+            setTimeout(function () {
+                var rowsDom = document.querySelectorAll('.pu-line-row').length;
+                console.log('[DOM_AFTER_RENDER] rows =', rowsDom);
+            }, 50);
+
+            if (card) {
+                try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* noop */ }
+            }
+        } catch (err) {
+            console.log('[ERROR] catch:', err && err.message ? err.message : err);
+            this.puSetStatus(this.getErrorMessage(err, 'Düzenleme açılamadı.'), 'error');
+        }
+    },
+
+    // Geriye doniik uyum — eski cagrilar varsa
+    puEditInvoiceById: function (invoiceId) {
+        if (!invoiceId) return;
+        var card = document.getElementById('puInvoiceCard');
+        if (card && (card.style.display === 'none' || !card.style.display)) {
+            this.puToggleForm();
+        }
+        try { this.puEditItem(invoiceId); } catch (e) { /* noop */ }
+        if (card) {
+            try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* noop */ }
+        }
+    },
+
+    /* ============================================================
+       INVOICE DELETE — soft delete tum purchase_items satirlari
+       Trigger 021 + 035 zinciri raw_materials.cost ve products.cost
+       guncellemelerini otomatik yapar.
+       ============================================================ */
+    puConfirmDeleteInvoice: async function (invoiceNo) {
+        if (!invoiceNo) return;
+
+        var ok = window.confirm(
+            'Bu alış faturası SİLİNECEK.\n\n' +
+            'Faturadaki tüm satırlar pasif (soft-delete) olur. ' +
+            'İlgili hammaddelerin maliyeti ve bu hammaddeleri kullanan ürünlerin ' +
+            'cost değerleri otomatik yeniden hesaplanır.\n\n' +
+            'Devam etmek istiyor musunuz?'
+        );
+        if (!ok) return;
+
+        try {
+            // invoice_no -> tum purchase_items satirlarini soft-delete
+            var client = (window.SupabaseService && window.SupabaseService.getClient)
+                ? window.SupabaseService.getClient() : null;
+            if (!client) {
+                this.puSetStatus('Supabase bağlı değil.', 'error');
+                return;
+            }
+
+            var res = await client
+                .from('purchase_items')
+                .update({ is_deleted: true })
+                .eq('invoice_no', invoiceNo)
+                .eq('is_deleted', false)
+                .select('id');
+
+            if (res.error) {
+                this.puSetStatus(this.getErrorMessage(res.error, 'Silme başarısız.'), 'error');
+                return;
+            }
+
+            // Cache invalidate (products + raw-materials + dashboard)
+            if (window.ViewCache && typeof window.ViewCache.invalidate === 'function') {
+                try {
+                    window.ViewCache.invalidate('products:');
+                    window.ViewCache.invalidate('raw-materials:');
+                    window.ViewCache.invalidate('dashboard:');
+                } catch (e) { /* noop */ }
+            }
+
+            // Notify
+            try {
+                window.dispatchEvent(new Event('products:updated'));
+                window.dispatchEvent(new Event('raw-materials:updated'));
+            } catch (e) { /* noop */ }
+
+            if (window.Toast && Toast.success) Toast.success('Fatura silindi. Maliyetler güncellendi.');
+
+            // Reload recent + raw materials cost cache
+            try { await this.puLoadRecent(); } catch (e) { /* noop */ }
+            try { if (typeof this.loadProducts === 'function') await this.loadProducts(); } catch (e) { /* noop */ }
+        } catch (err) {
+            this.puSetStatus(this.getErrorMessage(err, 'Silme başarısız.'), 'error');
+        }
     },
 
     /* ============================================================
@@ -3734,8 +4421,21 @@ window.ProductsView = {
     },
 
     puEditItem: function (invoiceId) {
+        console.log('[EDIT_ITEM] called with id =', invoiceId);
         var inv = this._puFindInvoice(invoiceId);
-        if (!inv || !inv.items || !inv.items.length) return;
+        console.log('[EDIT_ITEM] _puFindInvoice =>', inv ? { invoice_id: inv.invoice_id, items_len: (inv.items || []).length, is_legacy: inv.is_legacy } : 'NULL');
+
+        // FALLBACK: state lookup basarisiz ise stash'tan al
+        if ((!inv || !inv.items || !inv.items.length) && this.purchaseState._editStash) {
+            console.log('[EDIT_ITEM] Stash fallback aktif — direkt inv kullanılıyor');
+            inv = this.purchaseState._editStash;
+            console.log('[EDIT_ITEM] stash inv:', { invoice_id: inv.invoice_id, items_len: (inv.items || []).length, is_legacy: inv.is_legacy });
+        }
+
+        if (!inv || !inv.items || !inv.items.length) {
+            console.log('[ERROR][EDIT_ITEM] Erken çıkış — inv yok ya da items boş');
+            return;
+        }
 
         // State reset
         this.purchaseState.editingInvoiceId = inv.is_legacy ? null : inv.invoice_id;
@@ -3831,11 +4531,26 @@ window.ProductsView = {
             });
         });
 
+        console.log('[LINES_AFTER_MAP] purchaseState.lines length =', this.purchaseState.lines.length);
+        if (this.purchaseState.lines.length) {
+            console.log('[LINES_SAMPLE]', {
+                _k: this.purchaseState.lines[0]._k,
+                _originalId: this.purchaseState.lines[0]._originalId,
+                rmId: this.purchaseState.lines[0].rmId,
+                rmName: this.purchaseState.lines[0].rmName,
+                rmUnit: this.purchaseState.lines[0].rmUnit,
+                qty: this.purchaseState.lines[0].qty,
+                unitCost: this.purchaseState.lines[0].unitCost,
+                total: this.purchaseState.lines[0].total
+            });
+        }
+
         var btn = document.getElementById('puSaveAllBtn');
         if (btn) btn.textContent = 'Faturayı Güncelle';
 
         this.puSetVatMode(false);
         this.puRenderLines();
+        console.log('[POST_RENDER_LINES] purchaseState.lines =', this.purchaseState.lines.length, '| DOM .pu-line-row =', document.querySelectorAll('.pu-line-row').length);
 
         try {
             var form = document.getElementById('puLinesWrap');
@@ -3996,10 +4711,22 @@ window.ProductsView = {
     recalcPurchase: function (lastEdited) {
         if(window.__DEBUG__)console.log('RECALC:', lastEdited);
 
+        // Field normalization:
+        //   qty   → unit-side master (q × u = total)
+        //   unit  → unit-side master
+        //   total → total-side master (t / q = unit)
+        // Discount / VAT change'inde line-level override yapma — _puComputeLine
+        // zaten precise hesaplamis ve KDV/iskonto orantili dagilim icin
+        // puRecalcAll yeniden cagrilacak.
+        var normalized;
+        if (lastEdited === 'qty' || lastEdited === 'unit') normalized = 'unit';
+        else if (lastEdited === 'total') normalized = 'total';
+        else normalized = null; // discount/vat → line-level override yok
+
         var self = this;
         (this.purchaseState.lines || []).forEach(function (line) {
             var k = line._k;
-            var mode = lastEdited || line.lastEdited || 'unit';
+            var mode = normalized || line.lastEdited || 'unit';
             var q = parseFloat(line.qty) || 0;
             var u = parseFloat(line.unitCost) || 0;
             var t = parseFloat(line.total) || 0;
@@ -4060,7 +4787,7 @@ window.ProductsView = {
         if (this._puDebounceTimer) clearTimeout(this._puDebounceTimer);
 
         // VAT select / discount input değişiminde anında hesapla
-        var delay = (field === 'vat' || field === 'discount') ? 0 : 400;
+        var delay = (field === 'vat' || field === 'discount') ? 0 : 250;
 
         this._puDebounceTimer = setTimeout(function () {
             self._puDebounceTimer = null;
@@ -4179,6 +4906,27 @@ window.ProductsView = {
         if (dd) dd.style.display = 'block';
     },
 
+    /* ============================================================
+       PURCHASE UNIT COST HELPER (display-only)
+       DB cost = ₺ / base_unit (gr/ml/adet).
+       Purchase ekranı kullanicinin GÖRDÜĞÜ birim üzerinden çalışır
+       (kg/lt/adet) → display + prefill icin geri çeviririz.
+       Bu helper SADECE UI gösterim/prefill içindir; save flow’u
+       yine purchase unit (kg/lt) yazar, DB trigger 021 base'e çevirir.
+       ============================================================ */
+    _puPurchaseUnitCost: function (baseCost, purchaseUnit, baseUnit) {
+        var c = Number(baseCost) || 0;
+        if (!purchaseUnit || !baseUnit) return c;
+        if (purchaseUnit === baseUnit) return c;
+        // mass: gr ↔ kg
+        if (purchaseUnit === 'kg' && baseUnit === 'gr') return c * 1000;
+        // volume: ml ↔ cl ↔ lt
+        if (purchaseUnit === 'lt' && baseUnit === 'ml') return c * 1000;
+        if (purchaseUnit === 'cl' && baseUnit === 'ml') return c * 10;
+        // count: adet (paket desteklenmiyor — base_unit_cost as-is)
+        return c;
+    },
+
     puLineRenderDropdown: function (k) {
         var dd = document.getElementById('puLineDropdown_' + k);
         if (!dd) return;
@@ -4201,13 +4949,18 @@ window.ProductsView = {
         dd.innerHTML = list.map(function (m) {
             var id = self.escapeHtml(m.id);
             var name = self.escapeHtml(m.name || '');
-            var unit = self.escapeHtml(m.unit || '');
-            var cost = self.formatMoney(m.cost);
+            var purchaseUnit = m.unit || '';
+            var unit = self.escapeHtml(purchaseUnit || '');
+            // Cost: DB ₺/base_unit → display purchase_unit'e cevrilir
+            var purchaseCost = self._puPurchaseUnitCost(m.cost, purchaseUnit, m.base_unit || purchaseUnit);
+            var costText = purchaseCost > 0
+                ? (self.formatMoney(purchaseCost) + (unit ? ' / ' + unit : ''))
+                : '—';
             return '<div onclick="window.ProductsView.puLineSelect(' + k + ', \'' + id + '\')" ' +
                 'style="padding:10px 12px; cursor:pointer; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center; gap:10px;" ' +
                 'onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'transparent\'">' +
                 '<div><div style="font-weight:700; color:#0f172a; font-size:13px;">HM - ' + name + '</div>' +
-                '<div style="font-size:11px; color:#64748b;">Birim: ' + unit + ' • ' + cost + '</div></div>' +
+                '<div style="font-size:11px; color:#64748b;">Birim: ' + unit + ' • ' + costText + '</div></div>' +
             '</div>';
         }).join('');
     },
@@ -4221,7 +4974,11 @@ window.ProductsView = {
         line.rmId = m.id;
         line.rmName = m.name || '';
         line.rmUnit = m.unit || '';
-        if (!line.unitCost) line.unitCost = Number(m.cost) || '';
+        // PREFILL: ₺/base_unit (DB) → ₺/purchase_unit (kullanicinin gordugu)
+        if (!line.unitCost) {
+            var prefill = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
+            line.unitCost = prefill > 0 ? prefill : '';
+        }
 
         // ============================================================
         // KDV OTOMATIK DOLDURMA
@@ -5009,8 +5766,31 @@ window.ProductsView = {
             this.puAddLine();
         }
 
+        // Hammadde cost'lari trigger ile DB'de guncellendi —
+        // frontend cache'ini de yenile ki "alis faturasi" listesinde
+        // anlik son cost gorunsun.
+        try {
+            await this.puLoadRawMaterials();
+        } catch (eRm) { /* noop */ }
+
         await this.puLoadRecent();
-        window.dispatchEvent(new CustomEvent('products:updated'));
+
+        // Tum dinleyicilere haber ver: products + raw_materials + dashboard
+        try {
+            window.dispatchEvent(new CustomEvent('products:updated'));
+            window.dispatchEvent(new CustomEvent('raw-materials:updated'));
+            window.dispatchEvent(new CustomEvent('purchases:updated'));
+            window.dispatchEvent(new Event('dashboard:refresh'));
+        } catch (eEv) { /* noop */ }
+
+        // ViewCache'i de invalidate et (defensif — diger view'lar stale olmasin)
+        if (window.ViewCache && typeof window.ViewCache.invalidate === 'function') {
+            try {
+                window.ViewCache.invalidate('raw-materials-view:');
+                window.ViewCache.invalidate('products-view:');
+                window.ViewCache.invalidate('dashboard:');
+            } catch (eC) { /* noop */ }
+        }
         } finally {
             // Hata olsa da, başarı olsa da, erken return olsa da flag mutlaka resetlenir
             this._savingPurchase = false;

@@ -45,14 +45,32 @@ window.SalesView = {
                         <h2 style="margin:0 0 6px 0;font-size:28px;font-weight:800;color:#0f172a;">Satışlar</h2>
                         <p style="margin:0;color:#64748b;font-size:14px;">Günlük ve aylık satış raporları</p>
                     </div>
-                    <button id="salesBulkExportBtn" type="button" style="
-                        border:none;background:#22c55e;color:#fff;padding:12px 18px;
-                        border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
-                        display:flex;align-items:center;gap:8px;
-                    ">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Excel Raporu
-                    </button>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <button id="quickSaleBtn" type="button" style="
+                            border:none;background:#0f172a;color:#fff;padding:12px 18px;
+                            border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                            display:inline-flex;align-items:center;gap:8px;
+                        ">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Hızlı Satış Gir
+                        </button>
+                        <button id="salesReportsBtn" type="button" style="
+                            border:1px solid #e5e7eb;background:#ffffff;color:#0f172a;padding:12px 18px;
+                            border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                            display:inline-flex;align-items:center;gap:8px;
+                        ">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
+                            Satış Raporları
+                        </button>
+                        <button id="salesBulkExportBtn" type="button" style="
+                            border:none;background:#22c55e;color:#fff;padding:12px 18px;
+                            border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                            display:inline-flex;align-items:center;gap:8px;
+                        ">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Excel Raporu
+                        </button>
+                    </div>
                 </div>
 
                 <div style="
@@ -160,6 +178,63 @@ window.SalesView = {
                     </div>
                 </div>
 
+                <!-- HIZLI SATIŞ MODAL -->
+                <div id="quickSaleModal" style="
+                    display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);
+                    z-index:10000;align-items:center;justify-content:center;padding:20px;
+                    backdrop-filter:blur(4px);
+                ">
+                    <div style="
+                        background:#ffffff;border-radius:18px;padding:24px 26px;max-width:460px;width:100%;
+                        box-shadow:0 25px 80px rgba(15,23,42,0.22);
+                    ">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                            <h3 style="margin:0;font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">Hızlı Satış Gir</h3>
+                            <button id="quickSaleCloseBtn" type="button" style="border:none;background:#f1f5f9;color:#475569;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:18px;font-weight:700;">&times;</button>
+                        </div>
+                        <p style="margin:0 0 18px 0;color:#64748b;font-size:13px;line-height:1.5;">Ürün/maliyet seçimi olmadan hızlıca toplam ciro kaydı oluşturur.</p>
+
+                        <div style="margin-bottom:14px;">
+                            <label style="display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;">Tarih</label>
+                            <input id="quickSaleDate" type="date" style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;">
+                        </div>
+
+                        <div style="margin-bottom:14px;">
+                            <label style="display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;">Toplam Satış Tutarı (₺)</label>
+                            <input id="quickSaleTotal" type="number" min="0" step="0.01" placeholder="0,00" style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;">
+                        </div>
+
+                        <div style="margin-bottom:18px;">
+                            <label style="display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;">Not (opsiyonel)</label>
+                            <textarea id="quickSaleNotes" rows="2" placeholder="Açıklama..." style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>
+                        </div>
+
+                        <div style="display:flex;justify-content:flex-end;gap:10px;">
+                            <button id="quickSaleCancelBtn" type="button" style="padding:10px 18px;border:1px solid #e5e7eb;background:#fff;color:#475569;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">İptal</button>
+                            <button id="quickSaleSaveBtn" type="button" style="padding:10px 18px;border:none;background:#0f172a;color:#fff;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">Kaydet</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SATIŞ RAPORLARI MODAL -->
+                <div id="salesReportsModal" style="
+                    display:none;position:fixed;inset:0;background:rgba(15,23,42,0.55);
+                    z-index:10000;align-items:center;justify-content:center;padding:20px;
+                    backdrop-filter:blur(4px);
+                ">
+                    <div style="
+                        background:#ffffff;border-radius:18px;padding:24px 26px;max-width:820px;width:100%;
+                        box-shadow:0 25px 80px rgba(15,23,42,0.22);max-height:85vh;overflow-y:auto;
+                    ">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                            <h3 style="margin:0;font-size:18px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">Satış Raporları</h3>
+                            <button id="salesReportsCloseBtn" type="button" style="border:none;background:#f1f5f9;color:#475569;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:18px;font-weight:700;">&times;</button>
+                        </div>
+                        <p style="margin:0 0 18px 0;color:#64748b;font-size:13px;line-height:1.5;">Aktif filtre ve bugün için özet rakamlar.</p>
+                        <div id="salesReportsBody"></div>
+                    </div>
+                </div>
+
             </section>
         `;
 
@@ -217,6 +292,28 @@ window.SalesView = {
         this._on(modal, 'click', function (e) {
             if (e.target === modal) self.closeModal();
         });
+
+        // Quick Sale modal
+        var quickBtn        = document.getElementById('quickSaleBtn');
+        var quickModal      = document.getElementById('quickSaleModal');
+        var quickClose      = document.getElementById('quickSaleCloseBtn');
+        var quickCancel     = document.getElementById('quickSaleCancelBtn');
+        var quickSave       = document.getElementById('quickSaleSaveBtn');
+
+        this._on(quickBtn, 'click', function () { self.openQuickSale(); });
+        this._on(quickClose, 'click', function () { self.closeQuickSale(); });
+        this._on(quickCancel, 'click', function () { self.closeQuickSale(); });
+        this._on(quickModal, 'click', function (e) { if (e.target === quickModal) self.closeQuickSale(); });
+        this._on(quickSave, 'click', function () { self.saveQuickSale(); });
+
+        // Reports modal
+        var reportsBtn   = document.getElementById('salesReportsBtn');
+        var reportsModal = document.getElementById('salesReportsModal');
+        var reportsClose = document.getElementById('salesReportsCloseBtn');
+
+        this._on(reportsBtn, 'click', function () { self.openReports(); });
+        this._on(reportsClose, 'click', function () { self.closeReports(); });
+        this._on(reportsModal, 'click', function (e) { if (e.target === reportsModal) self.closeReports(); });
 
         this._salesUpdatedHandler = function () {
             self._lastFetchKey = '';
@@ -292,11 +389,7 @@ window.SalesView = {
                 this.renderSummary();
                 this.renderTable();
 
-                if (this.totalCount > 0) {
-                    this.setStatus(this.totalCount + ' satış kaydı bulundu.', 'success');
-                } else {
-                    this.setStatus('Seçili tarih aralığında satış kaydı bulunamadı.', 'info');
-                }
+                this.clearStatus();
                 return;
             }
         }
@@ -354,11 +447,7 @@ window.SalesView = {
             this.renderSummary();
             this.renderTable();
 
-            if (this.totalCount > 0) {
-                this.setStatus(`${this.totalCount} satış kaydı bulundu.`, 'success');
-            } else {
-                this.setStatus('Seçili tarih aralığında satış kaydı bulunamadı.', 'info');
-            }
+            this.clearStatus();
         } catch (err) {
             console.error('Sales load error:', err);
             this.salesData = [];
@@ -981,6 +1070,119 @@ window.SalesView = {
         return '0.0%';
     },
 
+    /* ============================================================
+       XLSX PREMIUM STYLING
+       Note: SheetJS CE (xlsx.full.min.js) cell .s renderlamaz.
+       .s set'leri xlsx-js-style yüklenirse otomatik aktifleşir.
+       CE tarafında: alignment.horizontal, merges, widths, heights,
+       freeze panes, format kodları çalışır.
+    ============================================================ */
+
+    _xlsxColors() {
+        return {
+            green:    { rgb: '16A34A' },   // NovaDash green
+            greenDk:  { rgb: '0D7A38' },   // header darker
+            navy:     { rgb: '0F172A' },   // total background
+            white:    { rgb: 'FFFFFF' },
+            text:     { rgb: '0F172A' },
+            muted:    { rgb: '64748B' },
+            zebra:    { rgb: 'F8FAFC' },   // very light gray
+            metaBg:   { rgb: 'F1F5F9' },
+            border:   { rgb: 'E5E7EB' }
+        };
+    },
+
+    _xlsxBorder(color) {
+        var c = color || this._xlsxColors().border;
+        return {
+            top:    { style: 'thin', color: c },
+            bottom: { style: 'thin', color: c },
+            left:   { style: 'thin', color: c },
+            right:  { style: 'thin', color: c }
+        };
+    },
+
+    _xlsxCellAt(ws, r, c) {
+        var ref = XLSX.utils.encode_cell({ r: r, c: c });
+        if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+        return ws[ref];
+    },
+
+    _xlsxApplyStyle(ws, r, c, style) {
+        var cell = this._xlsxCellAt(ws, r, c);
+        cell.s = Object.assign({}, cell.s || {}, style);
+    },
+
+    _xlsxStylize(ws, layout) {
+        var COLS = this._xlsxColors();
+        var cc   = layout.colCount;
+
+        // === TITLE ROW (row 0) ===
+        for (var c = 0; c < cc; c++) {
+            this._xlsxApplyStyle(ws, 0, c, {
+                font:      { bold: true, sz: 16, color: COLS.white, name: 'Calibri' },
+                fill:      { fgColor: COLS.green, patternType: 'solid' },
+                alignment: { horizontal: 'center', vertical: 'center' },
+                border:    this._xlsxBorder(COLS.green)
+            });
+        }
+
+        // === META ROWS (rows 1, 2) ===
+        for (var mr = 1; mr <= 2; mr++) {
+            for (var mc = 0; mc < cc; mc++) {
+                this._xlsxApplyStyle(ws, mr, mc, {
+                    font:      { bold: mc === 0, sz: 11, color: COLS.text, name: 'Calibri' },
+                    fill:      { fgColor: COLS.metaBg, patternType: 'solid' },
+                    alignment: { horizontal: mc === 0 ? 'left' : 'left', vertical: 'center', indent: 1 },
+                    border:    this._xlsxBorder()
+                });
+            }
+        }
+
+        // === HEADER ROW ===
+        var hr = layout.headerRow;
+        for (var hc = 0; hc < cc; hc++) {
+            var headerAlign = (layout.alignments && layout.alignments[hc]) || 'center';
+            this._xlsxApplyStyle(ws, hr, hc, {
+                font:      { bold: true, sz: 11, color: COLS.white, name: 'Calibri' },
+                fill:      { fgColor: COLS.greenDk, patternType: 'solid' },
+                alignment: { horizontal: 'center', vertical: 'center' },
+                border:    this._xlsxBorder(COLS.greenDk)
+            });
+        }
+
+        // === DATA ROWS (zebra) ===
+        for (var dr = layout.dataStart; dr < layout.totalRow; dr++) {
+            var isOdd = ((dr - layout.dataStart) % 2) === 1;
+            for (var dc = 0; dc < cc; dc++) {
+                var align = (layout.alignments && layout.alignments[dc]) || 'left';
+                this._xlsxApplyStyle(ws, dr, dc, {
+                    font:      { sz: 11, color: COLS.text, name: 'Calibri' },
+                    fill:      { fgColor: isOdd ? COLS.zebra : COLS.white, patternType: 'solid' },
+                    alignment: { horizontal: align, vertical: 'center', indent: dc === 0 ? 1 : 0 },
+                    border:    this._xlsxBorder()
+                });
+            }
+        }
+
+        // === TOTAL ROW ===
+        var tr = layout.totalRow;
+        for (var tc = 0; tc < cc; tc++) {
+            var totalAlign = (layout.alignments && layout.alignments[tc]) || 'right';
+            this._xlsxApplyStyle(ws, tr, tc, {
+                font:      { bold: true, sz: 12, color: COLS.white, name: 'Calibri' },
+                fill:      { fgColor: COLS.navy, patternType: 'solid' },
+                alignment: { horizontal: tc === 0 ? 'left' : totalAlign, vertical: 'center', indent: tc === 0 ? 1 : 0 },
+                border:    this._xlsxBorder(COLS.navy)
+            });
+        }
+
+        // === FREEZE PANES (header sabit) ===
+        ws['!freeze'] = { xSplit: 0, ySplit: layout.dataStart };
+        if (!ws['!sheetView']) ws['!sheetView'] = [];
+        ws['!sheetView'][0] = { state: 'frozen', xSplit: 0, ySplit: layout.dataStart };
+    },
+
     exportSaleExcel(saleId) {
         try {
             if (typeof XLSX === 'undefined') {
@@ -1008,23 +1210,20 @@ window.SalesView = {
             var FMT_INT = this._xlsxFormatInteger();
 
             var sheet = [];
-            sheet.push(['', '', '', '', '', '']);
-            sheet.push(['  SATIŞ RAPORU', '', '', '', '', '']);
-            sheet.push(['', '', '', '', '', '']);
-            sheet.push(['  İşletme Adı', '', businessName, '', '', '']);
-            sheet.push(['  Rapor Tarihi', '', dateLabel, '', '', '']);
-            sheet.push(['', '', '', '', '', '']);
+            sheet.push(['SATIŞ RAPORU', '', '', '', '', '']);
+            sheet.push(['İşletme', businessName, '', '', '', '']);
+            sheet.push(['Rapor Tarihi', dateLabel, '', '', '', '']);
             sheet.push([
-                '  Ürün Adı',
+                'Ürün Adı',
                 'Adet',
-                'Birim Fiyat (TL)',
-                'Toplam Tutar (TL)',
-                'Maliyeti (TL)',
-                'Kar (TL)'
+                'Birim Fiyat',
+                'Toplam',
+                'Maliyet',
+                'Kâr'
             ]);
 
-            var HEADER_ROW = 6;
-            var DATA_START = 7;
+            var HEADER_ROW = 3;
+            var DATA_START = 4;
             var sumTutar = 0, sumMaliyet = 0, sumKar = 0;
 
             for (var i = 0; i < saleProductSales.length; i++) {
@@ -1042,19 +1241,15 @@ window.SalesView = {
                 sumMaliyet += lineCost;
                 sumKar += lineProfit;
 
-                sheet.push(['  ' + name, quantity, unitPrice, lineTotal, lineCost, lineProfit]);
+                sheet.push([name, quantity, unitPrice, lineTotal, lineCost, lineProfit]);
             }
 
-            var SEP_ROW = sheet.length;
-            sheet.push(['  ─────────────────', '─────', '──────────', '──────────', '──────────', '──────────']);
-
             var TOTAL_ROW = sheet.length;
-            sheet.push(['  TOPLAM', '', '', sumTutar, sumMaliyet, sumKar]);
-            sheet.push(['', '', '', '', '', '']);
+            sheet.push(['TOPLAM', '', '', sumTutar, sumMaliyet, sumKar]);
 
             var ws = XLSX.utils.aoa_to_sheet(sheet);
 
-            for (var r = DATA_START; r < SEP_ROW; r++) {
+            for (var r = DATA_START; r < TOTAL_ROW; r++) {
                 this._xlsxSetFormat(ws, r, 1, FMT_INT);
                 this._xlsxSetFormat(ws, r, 2, FMT_TL);
                 this._xlsxSetFormat(ws, r, 3, FMT_TL);
@@ -1067,30 +1262,35 @@ window.SalesView = {
             this._xlsxSetFormat(ws, TOTAL_ROW, 5, FMT_TL);
 
             ws['!cols'] = [
-                { wch: 30 },
+                { wch: 32 },
                 { wch: 10 },
-                { wch: 20 },
-                { wch: 22 },
-                { wch: 20 },
-                { wch: 18 }
+                { wch: 16 },
+                { wch: 18 },
+                { wch: 16 },
+                { wch: 16 }
             ];
 
             ws['!rows'] = [];
-            ws['!rows'][0] = { hpt: 8 };
-            ws['!rows'][1] = { hpt: 32 };
-            ws['!rows'][2] = { hpt: 8 };
-            ws['!rows'][5] = { hpt: 8 };
-            ws['!rows'][HEADER_ROW] = { hpt: 24 };
-            ws['!rows'][SEP_ROW] = { hpt: 6 };
-            ws['!rows'][TOTAL_ROW] = { hpt: 24 };
+            ws['!rows'][0] = { hpt: 30 };
+            ws['!rows'][1] = { hpt: 20 };
+            ws['!rows'][2] = { hpt: 20 };
+            ws['!rows'][HEADER_ROW] = { hpt: 22 };
+            ws['!rows'][TOTAL_ROW]  = { hpt: 22 };
 
             ws['!merges'] = [
-                { s: { r: 1, c: 0 }, e: { r: 1, c: CC - 1 } },
-                { s: { r: 3, c: 0 }, e: { r: 3, c: 1 } },
-                { s: { r: 3, c: 2 }, e: { r: 3, c: CC - 1 } },
-                { s: { r: 4, c: 0 }, e: { r: 4, c: 1 } },
-                { s: { r: 4, c: 2 }, e: { r: 4, c: CC - 1 } }
+                { s: { r: 0, c: 0 }, e: { r: 0, c: CC - 1 } },
+                { s: { r: 1, c: 1 }, e: { r: 1, c: CC - 1 } },
+                { s: { r: 2, c: 1 }, e: { r: 2, c: CC - 1 } },
+                { s: { r: TOTAL_ROW, c: 0 }, e: { r: TOTAL_ROW, c: 2 } }
             ];
+
+            this._xlsxStylize(ws, {
+                colCount:   CC,
+                headerRow:  HEADER_ROW,
+                dataStart:  DATA_START,
+                totalRow:   TOTAL_ROW,
+                alignments: ['left', 'center', 'right', 'right', 'right', 'right']
+            });
 
             var wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Satış Raporu');
@@ -1139,23 +1339,20 @@ window.SalesView = {
             var FMT_PCT = this._xlsxFormatPercent();
 
             var sheet = [];
-            sheet.push(['', '', '', '', '', '']);
-            sheet.push(['  İKİ TARİH ARASI SATIŞ RAPORU', '', '', '', '', '']);
-            sheet.push(['', '', '', '', '', '']);
-            sheet.push(['  İşletme Adı', '', businessName, '', '', '']);
-            sheet.push(['  Tarih Aralığı', '', dateRange, '', '', '']);
-            sheet.push(['', '', '', '', '', '']);
+            sheet.push(['SATIŞ ÖZET RAPORU', '', '', '', '', '']);
+            sheet.push(['İşletme', businessName, '', '', '', '']);
+            sheet.push(['Tarih Aralığı', dateRange, '', '', '', '']);
             sheet.push([
-                '  Tarih',
-                'Toplam Ciro (TL)',
-                'Toplam Maliyet (TL)',
-                'Toplam Kar (TL)',
-                'Kar Oranı',
-                'Kar Marjı'
+                'Tarih',
+                'Toplam Ciro',
+                'Toplam Maliyet',
+                'Toplam Kâr',
+                'Kâr Oranı',
+                'Kâr Marjı'
             ]);
 
-            var HEADER_ROW = 6;
-            var DATA_START = 7;
+            var HEADER_ROW = 3;
+            var DATA_START = 4;
             var grandCiro = 0, grandMaliyet = 0, grandKar = 0;
 
             var rows = this.getDailyRows().slice().sort(function(a, b) {
@@ -1180,7 +1377,7 @@ window.SalesView = {
                 var dateDisplay = window.Formatters.date(row.date);
 
                 sheet.push([
-                    '  ' + dateDisplay,
+                    dateDisplay,
                     ciro,
                     maliyet,
                     kar,
@@ -1189,15 +1386,12 @@ window.SalesView = {
                 ]);
             }
 
-            var SEP_ROW = sheet.length;
-            sheet.push(['  ─────────────────', '──────────', '──────────', '──────────', '──────────', '──────────']);
-
             var TOTAL_ROW = sheet.length;
             var grandKarOraniDec = grandMaliyet > 0 ? (grandKar / grandMaliyet) : 0;
             var grandKarMarjiDec = grandCiro > 0 ? (grandKar / grandCiro) : 0;
 
             sheet.push([
-                '  TOPLAM',
+                'TOPLAM',
                 grandCiro,
                 grandMaliyet,
                 grandKar,
@@ -1205,11 +1399,9 @@ window.SalesView = {
                 grandKarMarjiDec
             ]);
 
-            sheet.push(['', '', '', '', '', '']);
-
             var ws = XLSX.utils.aoa_to_sheet(sheet);
 
-            for (var r = DATA_START; r < SEP_ROW; r++) {
+            for (var r = DATA_START; r < TOTAL_ROW; r++) {
                 this._xlsxSetFormat(ws, r, 1, FMT_TL);
                 this._xlsxSetFormat(ws, r, 2, FMT_TL);
                 this._xlsxSetFormat(ws, r, 3, FMT_TL);
@@ -1224,30 +1416,34 @@ window.SalesView = {
             this._xlsxSetFormat(ws, TOTAL_ROW, 5, FMT_PCT);
 
             ws['!cols'] = [
-                { wch: 24 },
                 { wch: 22 },
-                { wch: 24 },
-                { wch: 22 },
-                { wch: 16 },
-                { wch: 16 }
+                { wch: 18 },
+                { wch: 18 },
+                { wch: 18 },
+                { wch: 14 },
+                { wch: 14 }
             ];
 
             ws['!rows'] = [];
-            ws['!rows'][0] = { hpt: 8 };
-            ws['!rows'][1] = { hpt: 32 };
-            ws['!rows'][2] = { hpt: 8 };
-            ws['!rows'][5] = { hpt: 8 };
-            ws['!rows'][HEADER_ROW] = { hpt: 24 };
-            ws['!rows'][SEP_ROW] = { hpt: 6 };
-            ws['!rows'][TOTAL_ROW] = { hpt: 24 };
+            ws['!rows'][0] = { hpt: 30 };
+            ws['!rows'][1] = { hpt: 20 };
+            ws['!rows'][2] = { hpt: 20 };
+            ws['!rows'][HEADER_ROW] = { hpt: 22 };
+            ws['!rows'][TOTAL_ROW]  = { hpt: 22 };
 
             ws['!merges'] = [
-                { s: { r: 1, c: 0 }, e: { r: 1, c: CC - 1 } },
-                { s: { r: 3, c: 0 }, e: { r: 3, c: 1 } },
-                { s: { r: 3, c: 2 }, e: { r: 3, c: CC - 1 } },
-                { s: { r: 4, c: 0 }, e: { r: 4, c: 1 } },
-                { s: { r: 4, c: 2 }, e: { r: 4, c: CC - 1 } }
+                { s: { r: 0, c: 0 }, e: { r: 0, c: CC - 1 } },
+                { s: { r: 1, c: 1 }, e: { r: 1, c: CC - 1 } },
+                { s: { r: 2, c: 1 }, e: { r: 2, c: CC - 1 } }
             ];
+
+            this._xlsxStylize(ws, {
+                colCount:   CC,
+                headerRow:  HEADER_ROW,
+                dataStart:  DATA_START,
+                totalRow:   TOTAL_ROW,
+                alignments: ['center', 'right', 'right', 'right', 'center', 'center']
+            });
 
             var wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Satış Özet Raporu');
@@ -1264,6 +1460,329 @@ window.SalesView = {
             this.productSalesData = savedProductSales;
             this._rebuildCostMap();
         }
+    },
+
+    /* ============================================================
+       QUICK SALE
+    ============================================================ */
+
+    openQuickSale() {
+        var modal = document.getElementById('quickSaleModal');
+        if (!modal) return;
+        var dateEl   = document.getElementById('quickSaleDate');
+        var totalEl  = document.getElementById('quickSaleTotal');
+        var notesEl  = document.getElementById('quickSaleNotes');
+        if (dateEl)  dateEl.value  = (window.Formatters && window.Formatters.today) ? window.Formatters.today() : new Date().toISOString().slice(0,10);
+        if (totalEl) totalEl.value = '';
+        if (notesEl) notesEl.value = '';
+        modal.style.display = 'flex';
+        if (totalEl) setTimeout(function () { totalEl.focus(); }, 30);
+    },
+
+    closeQuickSale() {
+        var modal = document.getElementById('quickSaleModal');
+        if (modal) modal.style.display = 'none';
+    },
+
+    async saveQuickSale() {
+        var dateEl  = document.getElementById('quickSaleDate');
+        var totalEl = document.getElementById('quickSaleTotal');
+        var notesEl = document.getElementById('quickSaleNotes');
+        var saveBtn = document.getElementById('quickSaleSaveBtn');
+
+        var date  = dateEl  ? dateEl.value  : '';
+        var total = totalEl ? Number(totalEl.value || 0) : 0;
+        var notes = notesEl ? String(notesEl.value || '').trim() : '';
+
+        if (!date) { this.setStatus('Tarih zorunludur.', 'error'); return; }
+        if (!total || total <= 0) { this.setStatus('Tutar 0\'dan büyük olmalı.', 'error'); return; }
+        if (!window.SalesService || typeof window.SalesService.create !== 'function') {
+            this.setStatus('Satış servisi yüklenemedi.', 'error');
+            return;
+        }
+
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Kaydediliyor...'; }
+        try {
+            var res = await window.SalesService.create({
+                date: date,
+                total: total,
+                cash: 0,
+                card: 0,
+                notes: notes || null
+            });
+
+            if (res && res.error) {
+                this.setStatus(this.getErrorMessage(res.error, 'Satış kaydedilemedi.'), 'error');
+                return;
+            }
+
+            this.closeQuickSale();
+            this.setStatus('Satış kaydı eklendi.', 'success');
+
+            // refresh sales list + invalidate caches
+            this._lastFetchKey = '';
+            if (window.ViewCache) {
+                window.ViewCache.invalidate('sales:' + this._getTenantId());
+                window.ViewCache.invalidate('dashboard:');
+            }
+            await this.loadData(true);
+            try { window.dispatchEvent(new Event('sales:updated')); } catch (e) { /* noop */ }
+        } catch (err) {
+            this.setStatus(this.getErrorMessage(err, 'Satış kaydedilemedi.'), 'error');
+        } finally {
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Kaydet'; }
+        }
+    },
+
+    /* ============================================================
+       REPORTS PANEL
+    ============================================================ */
+
+    openReports() {
+        var modal = document.getElementById('salesReportsModal');
+        var body  = document.getElementById('salesReportsBody');
+        if (!modal || !body) return;
+
+        body.innerHTML = this._buildReportsHtml();
+        modal.style.display = 'flex';
+    },
+
+    closeReports() {
+        var modal = document.getElementById('salesReportsModal');
+        if (modal) modal.style.display = 'none';
+    },
+
+    _buildReportsHtml() {
+        var rows = (typeof this.getDailyRows === 'function') ? this.getDailyRows() : [];
+
+        if (!rows || !rows.length) {
+            return '<div style="padding:24px;text-align:center;color:#94a3b8;font-size:14px;font-weight:600;">Bu rapor için yeterli veri yok</div>' +
+                this._renderInsightsHtml(this._buildInsights([], ''));
+        }
+
+        var todayIso = (window.Formatters && window.Formatters.today) ? window.Formatters.today() : new Date().toISOString().slice(0,10);
+
+        var rangeCiro = 0, rangeCost = 0;
+        var todayCiro = 0, todayCost = 0;
+
+        rows.forEach(function (r) {
+            var ciro = Number(r.total || 0);
+            var cost = Number(r.cost  || 0);
+            rangeCiro += ciro;
+            rangeCost += cost;
+            if (r.date === todayIso) {
+                todayCiro += ciro;
+                todayCost += cost;
+            }
+        });
+
+        var rangeProfit = rangeCiro - rangeCost;
+        var todayProfit = todayCiro - todayCost;
+        var rangeMargin = rangeCiro > 0 ? (rangeProfit / rangeCiro) * 100 : 0;
+        var todayMargin = todayCiro > 0 ? (todayProfit / todayCiro) * 100 : 0;
+
+        var fmt = window.Formatters;
+        var c   = function (v) { return fmt && fmt.currency ? fmt.currency(v) : ('₺' + Number(v||0).toLocaleString('tr-TR')); };
+        var pct = function (v) { return Number(v||0).toFixed(1) + '%'; };
+        var d   = function (v) { return fmt && fmt.date ? fmt.date(v) : v; };
+
+        var startLabel = d(this.filterStart);
+        var endLabel   = d(this.filterEnd);
+
+        var section = function (title, subtitle, items) {
+            var inner = items.map(function (it) {
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;">' +
+                    '<span style="font-size:13px;color:#64748b;font-weight:600;">' + it[0] + '</span>' +
+                    '<span style="font-size:14px;color:#0f172a;font-weight:700;">' + it[1] + '</span>' +
+                '</div>';
+            }).join('');
+
+            return '<div style="padding:16px 18px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;height:100%;box-sizing:border-box;">' +
+                '<div style="font-size:11px;font-weight:800;color:#94a3b8;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:4px;">' + title + '</div>' +
+                (subtitle ? '<div style="font-size:13px;color:#475569;margin-bottom:10px;">' + subtitle + '</div>' : '<div style="height:8px;"></div>') +
+                inner +
+            '</div>';
+        };
+
+        var todayCard = section('Bugün (' + d(todayIso) + ')', '', [
+            ['Toplam Satış',  c(todayCiro)],
+            ['Toplam Maliyet', c(todayCost)],
+            ['Toplam Kâr',     c(todayProfit)],
+            ['Kâr Oranı',      pct(todayMargin)]
+        ]);
+        var rangeCard = section('Tarih Aralığı', startLabel + ' — ' + endLabel, [
+            ['Toplam Satış',  c(rangeCiro)],
+            ['Toplam Maliyet', c(rangeCost)],
+            ['Toplam Kâr',     c(rangeProfit)],
+            ['Kâr Oranı',      pct(rangeMargin)]
+        ]);
+
+        var html =
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:16px;">' +
+                todayCard +
+                rangeCard +
+            '</div>';
+
+        html += this._renderInsightsHtml(this._buildInsights(rows, todayIso));
+
+        return html;
+    },
+
+    /* ============================================================
+       AKILLI İÇGÖRÜLER
+       Gerçek veriden üretilir. Fake/placeholder yok.
+    ============================================================ */
+
+    _buildInsights(rows, todayIso) {
+        var insights = [];
+
+        if (!rows || !rows.length) {
+            insights.push({
+                type: 'info',
+                text: 'Analiz için yeterli veri bulunamadı.'
+            });
+            return insights;
+        }
+
+        // 1) Bugün vs 7-gün ortalaması
+        var sorted = rows.slice().sort(function (a, b) {
+            return String(a.date || '').localeCompare(String(b.date || ''));
+        });
+
+        var byDate = {};
+        sorted.forEach(function (r) {
+            var d = r.date || '';
+            if (!byDate[d]) byDate[d] = { total: 0, cost: 0 };
+            byDate[d].total += Number(r.total || 0);
+            byDate[d].cost  += Number(r.cost  || 0);
+        });
+
+        var todayCiro = (byDate[todayIso] && byDate[todayIso].total) || 0;
+
+        // last 7 days excluding today
+        var dayKeys = Object.keys(byDate).sort();
+        var lastSeven = dayKeys.filter(function (d) { return d !== todayIso; }).slice(-7);
+
+        if (lastSeven.length >= 2 && todayCiro > 0) {
+            var sum7 = lastSeven.reduce(function (s, d) { return s + byDate[d].total; }, 0);
+            var avg7 = sum7 / lastSeven.length;
+            if (avg7 > 0 && todayCiro > avg7 * 1.05) {
+                insights.push({
+                    type: 'good',
+                    text: 'Bugünkü satış performansı son 7 gün ortalamasının üzerinde.'
+                });
+            } else if (avg7 > 0 && todayCiro < avg7 * 0.7) {
+                insights.push({
+                    type: 'warn',
+                    text: 'Bugünkü satış son 7 gün ortalamasının belirgin altında.'
+                });
+            }
+        }
+
+        // 2) Yüksek kâr oranı + maliyet eksik olabilir
+        var totalCiro = 0, totalCost = 0;
+        sorted.forEach(function (r) {
+            totalCiro += Number(r.total || 0);
+            totalCost += Number(r.cost  || 0);
+        });
+        var marginPct = totalCiro > 0 ? ((totalCiro - totalCost) / totalCiro) * 100 : 0;
+        var costRatio = totalCiro > 0 ? (totalCost / totalCiro) * 100 : 0;
+
+        if (totalCiro > 0 && marginPct >= 80 && costRatio < 5) {
+            insights.push({
+                type: 'warn',
+                text: 'Kâr oranı yüksek görünüyor. Ürün maliyet verileri eksik olabilir.'
+            });
+        }
+
+        // 3) Trend — range'in son yarısı vs ilk yarısı
+        if (dayKeys.length >= 4) {
+            var mid = Math.floor(dayKeys.length / 2);
+            var firstHalf  = dayKeys.slice(0, mid);
+            var secondHalf = dayKeys.slice(mid);
+
+            var sumFirst  = firstHalf.reduce(function (s, d)  { return s + byDate[d].total; }, 0);
+            var sumSecond = secondHalf.reduce(function (s, d) { return s + byDate[d].total; }, 0);
+
+            var avgFirst  = firstHalf.length  ? sumFirst  / firstHalf.length  : 0;
+            var avgSecond = secondHalf.length ? sumSecond / secondHalf.length : 0;
+
+            if (avgFirst > 0) {
+                if (avgSecond > avgFirst * 1.1) {
+                    insights.push({
+                        type: 'good',
+                        text: 'Satış trendi olumlu ilerliyor.'
+                    });
+                } else if (avgSecond < avgFirst * 0.85) {
+                    insights.push({
+                        type: 'warn',
+                        text: 'Satış trendi son dönemde zayıflıyor.'
+                    });
+                }
+            }
+        }
+
+        // 4) Negatif kâr
+        if (totalCiro > 0 && (totalCiro - totalCost) < 0) {
+            insights.push({
+                type: 'warn',
+                text: 'Bu dönemde toplam kâr negatif. Maliyet kontrolü gerekebilir.'
+            });
+        }
+
+        if (!insights.length) {
+            insights.push({
+                type: 'info',
+                text: 'Veriler stabil. Belirgin bir uyarı tespit edilmedi.'
+            });
+        }
+
+        return insights;
+    },
+
+    _renderInsightsHtml(insights) {
+        if (!insights || !insights.length) return '';
+
+        var palette = {
+            good: { bar: '#16a34a', icon: '#16a34a', bg: '#f0fdf4' },
+            warn: { bar: '#d97706', icon: '#b45309', bg: '#fffbeb' },
+            info: { bar: '#0ea5e9', icon: '#0369a1', bg: '#f0f9ff' }
+        };
+
+        var iconSvg = function (type) {
+            if (type === 'good') {
+                return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            }
+            if (type === 'warn') {
+                return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+            }
+            return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+        };
+
+        var items = insights.map(function (it) {
+            var p = palette[it.type] || palette.info;
+            return '<div style="' +
+                'display:flex;align-items:flex-start;gap:10px;padding:11px 14px;' +
+                'border:1px solid #e5e7eb;border-left:3px solid ' + p.bar + ';' +
+                'border-radius:10px;background:' + p.bg + ';margin-bottom:8px;' +
+                '">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;color:' + p.icon + ';margin-top:1px;flex-shrink:0;">' + iconSvg(it.type) + '</span>' +
+                '<span style="font-size:13px;color:#0f172a;line-height:1.5;">' + it.text + '</span>' +
+            '</div>';
+        }).join('');
+
+        return '<div style="margin-top:4px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">' +
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 12 2z"/></svg>' +
+                '<span style="font-size:13px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">Akıllı İçgörüler</span>' +
+            '</div>' +
+            items +
+        '</div>';
+    },
+
+    clearStatus() {
+        const el = document.getElementById('salesStatus');
+        if (el) el.innerHTML = '';
     },
 
     setStatus(message, type) {

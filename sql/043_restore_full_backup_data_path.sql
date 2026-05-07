@@ -1,13 +1,8 @@
 -- ============================================================
--- 043 — RESTORE_FULL_BACKUP: data wrapper path fix
+-- 043 — RESTORE_FULL_BACKUP: FULL RESTORE (wipe + insert)
 --
--- Yedek JSON formati: { export_version, tenant_id, data: { ... } }
--- Onceden RPC backup->'products' okuyordu -> data wrapper'i atliyordu.
--- Simdi data wrapper'inin hem var hem yok olma durumunu destekler.
---
--- v_data := COALESCE(backup->'data', backup)
---   - Wrapper varsa data icindeki tablolar
---   - Yoksa backup'in kendisi (eski frontend payload)
+-- Tenant'in TUM verisini siler ve yedekten birebir yukler.
+-- Skip / EXISTS / unique_violation logic YOK.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION restore_full_backup(backup JSONB, tenant UUID)
@@ -28,15 +23,7 @@ DECLARE
     v_pi        JSONB;
     v_expense   JSONB;
 
-    v_old_rm_id      UUID;
-    v_new_rm_id      UUID;
-    v_old_product_id UUID;
-    v_new_product_id UUID;
-    v_old_sale_id    UUID;
-    v_new_sale_id    UUID;
-
     v_sale_date    DATE;
-    v_backup_notes TEXT;
     v_idem_key     TEXT;
 
     v_inserted_raw_materials  INT := 0;
@@ -45,17 +32,6 @@ DECLARE
     v_inserted_product_sales  INT := 0;
     v_inserted_purchase_items INT := 0;
     v_inserted_expenses       INT := 0;
-
-    v_skipped_raw_materials   INT := 0;
-    v_skipped_products        INT := 0;
-    v_skipped_sales           INT := 0;
-    v_skipped_product_sales   INT := 0;
-    v_skipped_purchase_items  INT := 0;
-    v_skipped_expenses        INT := 0;
-
-    v_rm_map      JSONB := '{}'::jsonb;
-    v_product_map JSONB := '{}'::jsonb;
-    v_sale_map    JSONB := '{}'::jsonb;
 BEGIN
     -- ============ AUTH ============
     v_auth_uid := auth.uid();
@@ -76,59 +52,39 @@ BEGIN
         RAISE EXCEPTION 'INVALID_BACKUP';
     END IF;
 
-    -- data wrapper destegi: { data: {...} } veya direkt { ... }
     v_data := COALESCE(backup->'data', backup);
+
+    -- ============ WIPE (FK sirasina gore: child once) ============
+    DELETE FROM product_sales  WHERE tenant_id = v_tenant_id;
+    DELETE FROM sales          WHERE tenant_id = v_tenant_id;
+    DELETE FROM purchase_items WHERE tenant_id = v_tenant_id;
+    DELETE FROM expenses       WHERE tenant_id = v_tenant_id;
+    DELETE FROM products       WHERE tenant_id = v_tenant_id;
+    DELETE FROM raw_materials  WHERE tenant_id = v_tenant_id;
 
     -- ============ 1) RAW_MATERIALS ============
     IF jsonb_typeof(v_data->'raw_materials') = 'array' THEN
         FOR v_rm IN SELECT * FROM jsonb_array_elements(v_data->'raw_materials')
         LOOP
             IF v_rm->>'name' IS NULL OR TRIM(v_rm->>'name') = '' THEN
-                v_skipped_raw_materials := v_skipped_raw_materials + 1;
                 CONTINUE;
             END IF;
 
-            v_old_rm_id := NULLIF(v_rm->>'id','')::uuid;
-            v_new_rm_id := NULL;
-
-            SELECT id INTO v_new_rm_id
-            FROM raw_materials
-            WHERE tenant_id = v_tenant_id
-              AND name = v_rm->>'name'
-            LIMIT 1;
-
-            IF v_new_rm_id IS NOT NULL THEN
-                v_skipped_raw_materials := v_skipped_raw_materials + 1;
-            ELSE
-                BEGIN
-                    INSERT INTO raw_materials (
-                        tenant_id, name, unit, cost, vat_rate,
-                        is_active, is_deleted, base_unit
-                    ) VALUES (
-                        v_tenant_id,
-                        v_rm->>'name',
-                        COALESCE(v_rm->>'unit', 'gr'),
-                        COALESCE((v_rm->>'cost')::numeric, 0),
-                        COALESCE((v_rm->>'vat_rate')::numeric, 20),
-                        COALESCE((v_rm->>'is_active')::boolean, true),
-                        COALESCE((v_rm->>'is_deleted')::boolean, false),
-                        v_rm->>'base_unit'
-                    )
-                    RETURNING id INTO v_new_rm_id;
-                    v_inserted_raw_materials := v_inserted_raw_materials + 1;
-                EXCEPTION WHEN unique_violation THEN
-                    v_skipped_raw_materials := v_skipped_raw_materials + 1;
-                    SELECT id INTO v_new_rm_id
-                    FROM raw_materials
-                    WHERE tenant_id = v_tenant_id
-                      AND name = v_rm->>'name'
-                    LIMIT 1;
-                END;
-            END IF;
-
-            IF v_old_rm_id IS NOT NULL AND v_new_rm_id IS NOT NULL THEN
-                v_rm_map := v_rm_map || jsonb_build_object(v_old_rm_id::text, v_new_rm_id::text);
-            END IF;
+            INSERT INTO raw_materials (
+                id, tenant_id, name, unit, cost, vat_rate,
+                is_active, is_deleted, base_unit
+            ) VALUES (
+                COALESCE(NULLIF(v_rm->>'id','')::uuid, gen_random_uuid()),
+                v_tenant_id,
+                v_rm->>'name',
+                COALESCE(v_rm->>'unit', 'gr'),
+                COALESCE((v_rm->>'cost')::numeric, 0),
+                COALESCE((v_rm->>'vat_rate')::numeric, 20),
+                COALESCE((v_rm->>'is_active')::boolean, true),
+                COALESCE((v_rm->>'is_deleted')::boolean, false),
+                v_rm->>'base_unit'
+            );
+            v_inserted_raw_materials := v_inserted_raw_materials + 1;
         END LOOP;
     END IF;
 
@@ -137,53 +93,28 @@ BEGIN
         FOR v_product IN SELECT * FROM jsonb_array_elements(v_data->'products')
         LOOP
             IF v_product->>'name' IS NULL OR TRIM(v_product->>'name') = '' THEN
-                v_skipped_products := v_skipped_products + 1;
                 CONTINUE;
             END IF;
 
-            v_old_product_id := NULLIF(v_product->>'id','')::uuid;
-            v_new_product_id := NULL;
-
-            SELECT id INTO v_new_product_id
-            FROM products
-            WHERE tenant_id = v_tenant_id
-              AND name = v_product->>'name'
-            LIMIT 1;
-
-            IF v_new_product_id IS NOT NULL THEN
-                v_skipped_products := v_skipped_products + 1;
-            ELSE
-                BEGIN
-                    INSERT INTO products (
-                        tenant_id, name, price, cost, is_active, is_deleted,
-                        category_id, category_name
-                    ) VALUES (
-                        v_tenant_id,
-                        v_product->>'name',
-                        COALESCE((v_product->>'price')::numeric, 0),
-                        COALESCE((v_product->>'cost')::numeric, 0),
-                        COALESCE((v_product->>'is_active')::boolean, true),
-                        COALESCE((v_product->>'is_deleted')::boolean, false),
-                        NULLIF(v_product->>'category_id','')::uuid,
-                        COALESCE(
-                            v_product->>'category_name',
-                            (SELECT name FROM categories
-                             WHERE id = NULLIF(v_product->>'category_id','')::uuid LIMIT 1)
-                        )
-                    )
-                    RETURNING id INTO v_new_product_id;
-                    v_inserted_products := v_inserted_products + 1;
-                EXCEPTION WHEN unique_violation THEN
-                    v_skipped_products := v_skipped_products + 1;
-                    SELECT id INTO v_new_product_id
-                    FROM products
-                    WHERE tenant_id = v_tenant_id AND name = v_product->>'name' LIMIT 1;
-                END;
-            END IF;
-
-            IF v_old_product_id IS NOT NULL AND v_new_product_id IS NOT NULL THEN
-                v_product_map := v_product_map || jsonb_build_object(v_old_product_id::text, v_new_product_id::text);
-            END IF;
+            INSERT INTO products (
+                id, tenant_id, name, price, cost, is_active, is_deleted,
+                category_id, category_name
+            ) VALUES (
+                COALESCE(NULLIF(v_product->>'id','')::uuid, gen_random_uuid()),
+                v_tenant_id,
+                v_product->>'name',
+                COALESCE((v_product->>'price')::numeric, 0),
+                COALESCE((v_product->>'cost')::numeric, 0),
+                COALESCE((v_product->>'is_active')::boolean, true),
+                COALESCE((v_product->>'is_deleted')::boolean, false),
+                NULLIF(v_product->>'category_id','')::uuid,
+                COALESCE(
+                    v_product->>'category_name',
+                    (SELECT name FROM categories
+                     WHERE id = NULLIF(v_product->>'category_id','')::uuid LIMIT 1)
+                )
+            );
+            v_inserted_products := v_inserted_products + 1;
         END LOOP;
     END IF;
 
@@ -192,50 +123,30 @@ BEGIN
         FOR v_sale IN SELECT * FROM jsonb_array_elements(v_data->'sales')
         LOOP
             IF v_sale->>'date' IS NULL OR v_sale->>'total' IS NULL THEN
-                v_skipped_sales := v_skipped_sales + 1;
                 CONTINUE;
             END IF;
 
-            v_old_sale_id  := NULLIF(v_sale->>'id','')::uuid;
-            v_new_sale_id  := NULL;
-            v_sale_date    := (v_sale->>'date')::date;
-            v_backup_notes := v_sale->>'notes';
+            v_sale_date := (v_sale->>'date')::date;
 
-            v_idem_key := md5(
-                v_tenant_id::text || '|' ||
-                v_sale_date::text  || '|' ||
-                COALESCE((v_sale->>'total')::numeric, 0)::text || '|' ||
-                COALESCE((v_sale->>'cash')::numeric, 0)::text  || '|' ||
-                COALESCE((v_sale->>'card')::numeric, 0)::text  || '|' ||
-                COALESCE(v_backup_notes, '')
+            v_idem_key := COALESCE(
+                NULLIF(v_sale->>'idempotency_key', ''),
+                'import_' || gen_random_uuid()::text
             );
 
             INSERT INTO sales (
-                tenant_id, date, total, cash, card, notes, is_deleted, idempotency_key
+                id, tenant_id, date, total, cash, card, notes, is_deleted, idempotency_key
             ) VALUES (
+                COALESCE(NULLIF(v_sale->>'id','')::uuid, gen_random_uuid()),
                 v_tenant_id,
                 v_sale_date,
                 COALESCE((v_sale->>'total')::numeric, 0),
                 COALESCE((v_sale->>'cash')::numeric, 0),
                 COALESCE((v_sale->>'card')::numeric, 0),
-                v_backup_notes,
-                false,
+                v_sale->>'notes',
+                COALESCE((v_sale->>'is_deleted')::boolean, false),
                 v_idem_key
-            )
-            ON CONFLICT (idempotency_key) DO NOTHING
-            RETURNING id INTO v_new_sale_id;
-
-            IF v_new_sale_id IS NULL THEN
-                v_skipped_sales := v_skipped_sales + 1;
-                SELECT id INTO v_new_sale_id
-                FROM sales WHERE tenant_id = v_tenant_id AND idempotency_key = v_idem_key LIMIT 1;
-            ELSE
-                v_inserted_sales := v_inserted_sales + 1;
-            END IF;
-
-            IF v_old_sale_id IS NOT NULL AND v_new_sale_id IS NOT NULL THEN
-                v_sale_map := v_sale_map || jsonb_build_object(v_old_sale_id::text, v_new_sale_id::text);
-            END IF;
+            );
+            v_inserted_sales := v_inserted_sales + 1;
         END LOOP;
     END IF;
 
@@ -244,51 +155,32 @@ BEGIN
         FOR v_ps IN SELECT * FROM jsonb_array_elements(v_data->'product_sales')
         LOOP
             IF v_ps->>'sale_id' IS NULL OR v_ps->>'product_id' IS NULL THEN
-                v_skipped_product_sales := v_skipped_product_sales + 1;
                 CONTINUE;
             END IF;
 
-            v_new_sale_id := NULLIF(v_sale_map->>(v_ps->>'sale_id'),'')::uuid;
-            IF v_new_sale_id IS NULL THEN
-                v_skipped_product_sales := v_skipped_product_sales + 1;
-                CONTINUE;
-            END IF;
+            SELECT date INTO v_sale_date
+            FROM sales
+            WHERE id = NULLIF(v_ps->>'sale_id','')::uuid;
 
-            v_new_product_id := NULLIF(v_product_map->>(v_ps->>'product_id'),'')::uuid;
-            IF v_new_product_id IS NULL THEN
-                v_skipped_product_sales := v_skipped_product_sales + 1;
-                CONTINUE;
-            END IF;
-
-            IF EXISTS (
-                SELECT 1 FROM product_sales
-                WHERE sale_id = v_new_sale_id AND product_id = v_new_product_id
-            ) THEN
-                v_skipped_product_sales := v_skipped_product_sales + 1;
-                CONTINUE;
-            END IF;
-
-            SELECT date INTO v_sale_date FROM sales WHERE id = v_new_sale_id;
-
-            BEGIN
-                INSERT INTO product_sales (
-                    tenant_id, sale_id, product_id, date,
-                    quantity, unit_price, total, cost
-                ) VALUES (
-                    v_tenant_id, v_new_sale_id, v_new_product_id, v_sale_date,
-                    COALESCE((v_ps->>'quantity')::int, 0),
-                    COALESCE((v_ps->>'unit_price')::numeric, 0),
-                    COALESCE((v_ps->>'total')::numeric, 0),
-                    COALESCE(
-                        (v_ps->>'cost')::numeric,
-                        (SELECT cost FROM products WHERE id = v_new_product_id),
-                        0
-                    )
-                );
-                v_inserted_product_sales := v_inserted_product_sales + 1;
-            EXCEPTION WHEN unique_violation THEN
-                v_skipped_product_sales := v_skipped_product_sales + 1;
-            END;
+            INSERT INTO product_sales (
+                id, tenant_id, sale_id, product_id, date,
+                quantity, unit_price, total, cost
+            ) VALUES (
+                COALESCE(NULLIF(v_ps->>'id','')::uuid, gen_random_uuid()),
+                v_tenant_id,
+                NULLIF(v_ps->>'sale_id','')::uuid,
+                NULLIF(v_ps->>'product_id','')::uuid,
+                COALESCE((v_ps->>'date')::date, v_sale_date),
+                COALESCE((v_ps->>'quantity')::int, 0),
+                COALESCE((v_ps->>'unit_price')::numeric, 0),
+                COALESCE((v_ps->>'total')::numeric, 0),
+                COALESCE(
+                    (v_ps->>'cost')::numeric,
+                    (SELECT cost FROM products WHERE id = NULLIF(v_ps->>'product_id','')::uuid),
+                    0
+                )
+            );
+            v_inserted_product_sales := v_inserted_product_sales + 1;
         END LOOP;
     END IF;
 
@@ -297,53 +189,38 @@ BEGIN
         FOR v_pi IN SELECT * FROM jsonb_array_elements(v_data->'purchase_items')
         LOOP
             IF v_pi->>'raw_material_id' IS NULL THEN
-                v_skipped_purchase_items := v_skipped_purchase_items + 1;
                 CONTINUE;
             END IF;
 
-            v_new_rm_id := NULLIF(v_rm_map->>(v_pi->>'raw_material_id'),'')::uuid;
-            IF v_new_rm_id IS NULL THEN
-                SELECT id INTO v_new_rm_id
-                FROM raw_materials
-                WHERE id = NULLIF(v_pi->>'raw_material_id','')::uuid
-                  AND tenant_id = v_tenant_id LIMIT 1;
-            END IF;
-            IF v_new_rm_id IS NULL THEN
-                v_skipped_purchase_items := v_skipped_purchase_items + 1;
-                CONTINUE;
-            END IF;
-
-            BEGIN
-                INSERT INTO purchase_items (
-                    tenant_id, raw_material_id,
-                    quantity, unit, unit_cost, line_total,
-                    vat_rate, discount_rate,
-                    base_quantity, base_unit_cost,
-                    general_discount_amount, general_discount_type,
-                    note, invoice_date, invoice_no,
-                    is_deleted, created_at
-                ) VALUES (
-                    v_tenant_id, v_new_rm_id,
-                    COALESCE((v_pi->>'quantity')::numeric, 0),
-                    v_pi->>'unit',
-                    COALESCE((v_pi->>'unit_cost')::numeric, 0),
-                    COALESCE((v_pi->>'line_total')::numeric, 0),
-                    COALESCE((v_pi->>'vat_rate')::numeric, 0),
-                    COALESCE((v_pi->>'discount_rate')::numeric, 0),
-                    NULLIF(v_pi->>'base_quantity','')::numeric,
-                    NULLIF(v_pi->>'base_unit_cost','')::numeric,
-                    COALESCE((v_pi->>'general_discount_amount')::numeric, 0),
-                    COALESCE(v_pi->>'general_discount_type', 'amount'),
-                    v_pi->>'note',
-                    NULLIF(v_pi->>'invoice_date','')::date,
-                    NULLIF(v_pi->>'invoice_no','')::bigint,
-                    COALESCE((v_pi->>'is_deleted')::boolean, false),
-                    COALESCE((v_pi->>'created_at')::timestamptz, now())
-                );
-                v_inserted_purchase_items := v_inserted_purchase_items + 1;
-            EXCEPTION WHEN unique_violation THEN
-                v_skipped_purchase_items := v_skipped_purchase_items + 1;
-            END;
+            INSERT INTO purchase_items (
+                id, tenant_id, raw_material_id,
+                quantity, unit, unit_cost, line_total,
+                vat_rate, discount_rate,
+                base_quantity, base_unit_cost,
+                general_discount_amount, general_discount_type,
+                note, invoice_date, invoice_no,
+                is_deleted, created_at
+            ) VALUES (
+                COALESCE(NULLIF(v_pi->>'id','')::uuid, gen_random_uuid()),
+                v_tenant_id,
+                NULLIF(v_pi->>'raw_material_id','')::uuid,
+                COALESCE((v_pi->>'quantity')::numeric, 0),
+                v_pi->>'unit',
+                COALESCE((v_pi->>'unit_cost')::numeric, 0),
+                COALESCE((v_pi->>'line_total')::numeric, 0),
+                COALESCE((v_pi->>'vat_rate')::numeric, 0),
+                COALESCE((v_pi->>'discount_rate')::numeric, 0),
+                NULLIF(v_pi->>'base_quantity','')::numeric,
+                NULLIF(v_pi->>'base_unit_cost','')::numeric,
+                COALESCE((v_pi->>'general_discount_amount')::numeric, 0),
+                COALESCE(v_pi->>'general_discount_type', 'amount'),
+                v_pi->>'note',
+                NULLIF(v_pi->>'invoice_date','')::date,
+                NULLIF(v_pi->>'invoice_no','')::bigint,
+                COALESCE((v_pi->>'is_deleted')::boolean, false),
+                COALESCE((v_pi->>'created_at')::timestamptz, now())
+            );
+            v_inserted_purchase_items := v_inserted_purchase_items + 1;
         END LOOP;
     END IF;
 
@@ -352,40 +229,25 @@ BEGIN
         FOR v_expense IN SELECT * FROM jsonb_array_elements(v_data->'expenses')
         LOOP
             IF v_expense->>'date' IS NULL OR v_expense->>'amount' IS NULL THEN
-                v_skipped_expenses := v_skipped_expenses + 1;
                 CONTINUE;
             END IF;
 
-            IF EXISTS (
-                SELECT 1 FROM expenses
-                WHERE tenant_id = v_tenant_id
-                  AND date = (v_expense->>'date')::date
-                  AND amount = COALESCE((v_expense->>'amount')::numeric, 0)
-                  AND COALESCE(description, '') = COALESCE(v_expense->>'description', '')
-            ) THEN
-                v_skipped_expenses := v_skipped_expenses + 1;
-                CONTINUE;
-            END IF;
-
-            BEGIN
-                INSERT INTO expenses (
-                    tenant_id, date, amount, description, category_id, category_name
-                ) VALUES (
-                    v_tenant_id,
-                    (v_expense->>'date')::date,
-                    COALESCE((v_expense->>'amount')::numeric, 0),
-                    v_expense->>'description',
-                    NULLIF(v_expense->>'category_id','')::uuid,
-                    COALESCE(
-                        v_expense->>'category_name',
-                        (SELECT name FROM categories
-                         WHERE id = NULLIF(v_expense->>'category_id','')::uuid LIMIT 1)
-                    )
-                );
-                v_inserted_expenses := v_inserted_expenses + 1;
-            EXCEPTION WHEN unique_violation THEN
-                v_skipped_expenses := v_skipped_expenses + 1;
-            END;
+            INSERT INTO expenses (
+                id, tenant_id, date, amount, description, category_id, category_name
+            ) VALUES (
+                COALESCE(NULLIF(v_expense->>'id','')::uuid, gen_random_uuid()),
+                v_tenant_id,
+                (v_expense->>'date')::date,
+                COALESCE((v_expense->>'amount')::numeric, 0),
+                v_expense->>'description',
+                NULLIF(v_expense->>'category_id','')::uuid,
+                COALESCE(
+                    v_expense->>'category_name',
+                    (SELECT name FROM categories
+                     WHERE id = NULLIF(v_expense->>'category_id','')::uuid LIMIT 1)
+                )
+            );
+            v_inserted_expenses := v_inserted_expenses + 1;
         END LOOP;
     END IF;
 
@@ -393,20 +255,14 @@ BEGIN
     BEGIN
         PERFORM write_system_log(
             v_tenant_id, v_auth_uid, 'restore', 'success',
-            'Restore tamamlandi (full backup, data path)',
+            'Full restore tamamlandi (wipe + insert)',
             jsonb_build_object(
                 'inserted_raw_materials',  v_inserted_raw_materials,
                 'inserted_products',       v_inserted_products,
                 'inserted_sales',          v_inserted_sales,
                 'inserted_product_sales',  v_inserted_product_sales,
                 'inserted_purchase_items', v_inserted_purchase_items,
-                'inserted_expenses',       v_inserted_expenses,
-                'skipped_raw_materials',   v_skipped_raw_materials,
-                'skipped_products',        v_skipped_products,
-                'skipped_sales',           v_skipped_sales,
-                'skipped_product_sales',   v_skipped_product_sales,
-                'skipped_purchase_items',  v_skipped_purchase_items,
-                'skipped_expenses',        v_skipped_expenses
+                'inserted_expenses',       v_inserted_expenses
             )
         );
     EXCEPTION WHEN OTHERS THEN NULL;
@@ -421,14 +277,6 @@ BEGIN
             'product_sales',  v_inserted_product_sales,
             'purchase_items', v_inserted_purchase_items,
             'expenses',       v_inserted_expenses
-        ),
-        'skipped', jsonb_build_object(
-            'raw_materials',  v_skipped_raw_materials,
-            'products',       v_skipped_products,
-            'sales',          v_skipped_sales,
-            'product_sales',  v_skipped_product_sales,
-            'purchase_items', v_skipped_purchase_items,
-            'expenses',       v_skipped_expenses
         )
     );
 

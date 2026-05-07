@@ -19,6 +19,14 @@ window.ExpensesView = {
     toastTimer: null,
     _listeners: [],
     _isActive: false,
+    _skeletonMounted: false,
+    _lastFilterMode: null,
+    _lastFilterDateBlockHash: null,
+
+    // Aylik ciro/gider orani — null while loading, number (percent) when ready
+    monthlyRatio: null,
+    monthlyRatioLabel: '',
+    _monthlyRatioKey: '',
 
     pagination: {
         page: 1,
@@ -87,6 +95,9 @@ window.ExpensesView = {
             this.renderPage();
             this.bindEvents();
 
+            // Aylik ciro/gider orani — fire-and-forget, hazir olunca re-render
+            this.loadMonthlyRatio();
+
             // === CACHE WRITE ===
             if (window.ViewCache) {
                 window.ViewCache.set(cacheKey, {
@@ -112,11 +123,30 @@ window.ExpensesView = {
         }
     },
 
-    tenantId() {
-        if (!window.STATE || !window.STATE.tenant || !window.STATE.tenant.id) {
+    async tenantId() {
+        var supabase = this.client();
+
+        var authRes = await supabase.auth.getUser();
+        var user = authRes && authRes.data ? authRes.data.user : null;
+        if (!user) {
+            throw new Error('User yok');
+        }
+
+        var res = await supabase
+            .from('users')
+            .select('tenant_id')
+            .eq('id', user.id)
+            .single();
+
+        if (res.error) {
+            throw new Error(res.error.message || 'Tenant bulunamadı');
+        }
+
+        if (!res.data || !res.data.tenant_id) {
             throw new Error('Tenant bulunamadı');
         }
-        return window.STATE.tenant.id;
+
+        return res.data.tenant_id;
     },
 
     tenantName() {
@@ -161,6 +191,102 @@ window.ExpensesView = {
 
     formatRatioForExcel(value) {
         return Number(value || 0) / 100;
+    },
+
+    /* ============================================================
+       AYLIK CIRO / GIDER ORANI
+       - Hangi ay? Mevcut filtreye göre:
+           daily/custom → startDate'in ait olduğu ay
+           monthly      → bugünün ait olduğu ay
+       - Sales (is_deleted=false) toplam cirosu / Expenses toplamı
+       - Display: "%35" + "Mayıs 2026" (örnek)
+       ============================================================ */
+
+    _getRatioMonthBounds() {
+        var iso = this.filters.startDate || this.todayISO();
+        var d   = new Date(iso + 'T00:00:00');
+        if (isNaN(d.getTime())) d = new Date();
+        var y = d.getFullYear();
+        var m = d.getMonth(); // 0-based
+        var first = new Date(y, m, 1);
+        var last  = new Date(y, m + 1, 0);
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        var fmt = function (dd) { return dd.getFullYear() + '-' + pad(dd.getMonth() + 1) + '-' + pad(dd.getDate()); };
+        var monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+                          'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+        return {
+            start: fmt(first),
+            end:   fmt(last),
+            label: monthNames[m] + ' ' + y,
+            key:   y + '-' + pad(m + 1)
+        };
+    },
+
+    _getMonthlyRatioDisplay() {
+        var b = this._getRatioMonthBounds();
+        if (this.monthlyRatio === null) {
+            return { value: '—', label: b.label };
+        }
+        return { value: '%' + Number(this.monthlyRatio).toFixed(1), label: b.label };
+    },
+
+    async loadMonthlyRatio() {
+        var b = this._getRatioMonthBounds();
+
+        // Aynı ay zaten yüklenmişse tekrar fetch yapma
+        if (this._monthlyRatioKey === b.key && this.monthlyRatio !== null) return;
+
+        this._monthlyRatioKey = b.key;
+        // Önce reset (loading state)
+        this.monthlyRatio = null;
+        this.monthlyRatioLabel = b.label;
+
+        try {
+            var client = this.client();
+            if (!client) return;
+
+            var tenantId = await this.tenantId();
+            if (!this._isActive) return;
+
+            // Paralel fetch — sales total + expenses total (aylik)
+            var salesP = client
+                .from('sales')
+                .select('total')
+                .eq('tenant_id', tenantId)
+                .eq('is_deleted', false)
+                .gte('date', b.start)
+                .lte('date', b.end);
+
+            var expensesP = client
+                .from('expenses')
+                .select('amount')
+                .eq('tenant_id', tenantId)
+                .gte('date', b.start)
+                .lte('date', b.end);
+
+            var results = await Promise.all([salesP, expensesP]);
+            if (!this._isActive) return;
+
+            var salesRes = results[0];
+            var expRes   = results[1];
+
+            if (salesRes.error || expRes.error) return;
+
+            var salesSum = (salesRes.data || []).reduce(function (s, r) { return s + Number(r.total || 0); }, 0);
+            var expSum   = (expRes.data   || []).reduce(function (s, r) { return s + Number(r.amount || 0); }, 0);
+
+            this.monthlyRatio = salesSum > 0 ? (expSum / salesSum) * 100 : 0;
+
+            // Sadece ratio kart değeri tazelensin — full render gereksiz
+            if (this._isActive && this._skeletonMounted) {
+                var info = this._getMonthlyRatioDisplay();
+                this._setText('exKpiValRatio', info.value);
+                this._setText('exKpiSubRatio', info.label);
+            }
+        } catch (err) {
+            // Sessiz fail — KPI "—" olarak kalir
+            this.monthlyRatio = null;
+        }
     },
 
     formatDate(value) {
@@ -316,12 +442,12 @@ window.ExpensesView = {
 
         await this.loadExpenses();
         if (!this._isActive) return;
-        this.renderPage();
-        this.bindEvents();
+        this._softUpdate();
+        this.loadMonthlyRatio();
     },
 
     async ensureDefaultCategories() {
-        var tenantId = this.tenantId();
+        var tenantId = await this.tenantId();
 
         var existing = await this.client()
             .from('categories')
@@ -365,10 +491,11 @@ window.ExpensesView = {
     },
 
     async loadCategories() {
+        var tenantId = await this.tenantId();
         var res = await this.client()
             .from('categories')
             .select('id,name,color,type,sort_order')
-            .eq('tenant_id', this.tenantId())
+            .eq('tenant_id', tenantId)
             .eq('type', 'expense')
             .order('sort_order', { ascending: true })
             .order('name', { ascending: true });
@@ -511,10 +638,11 @@ window.ExpensesView = {
     },
 
     async fetchExportData(startDate, endDate) {
+        var tenantId = await this.tenantId();
         var expenseRes = await this.client()
             .from('expenses')
             .select('date,amount')
-            .eq('tenant_id', this.tenantId())
+            .eq('tenant_id', tenantId)
             .gte('date', startDate)
             .lte('date', endDate)
             .order('date', { ascending: true });
@@ -526,7 +654,7 @@ window.ExpensesView = {
         var salesRes = await this.client()
             .from('sales')
             .select('date,total')
-            .eq('tenant_id', this.tenantId())
+            .eq('tenant_id', tenantId)
             .eq('is_deleted', false)
             .gte('date', startDate)
             .lte('date', endDate)
@@ -810,6 +938,9 @@ window.ExpensesView = {
         var expenseCount = this.getVisibleExpenseCount();
         var activeFilterLabel = this.getActiveFilterLabel();
 
+        var ratioInfo = this._getMonthlyRatioDisplay();
+        this._lastFilterMode = this.filters.mode;
+
         this.container.innerHTML =
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">' +
                 '<div>' +
@@ -821,22 +952,43 @@ window.ExpensesView = {
                 '</div>' +
             '</div>' +
 
-            '<div style="display:grid;grid-template-columns:repeat(2,minmax(220px,280px));gap:14px;margin-top:18px;">' +
-                '<div class="card" style="border-top:4px solid #22C55E;">' +
-                    '<div style="padding:16px 18px;">' +
-                        '<div style="font-size:12px;font-weight:700;color:#64748B;letter-spacing:.04em;">TOPLAM GİDER</div>' +
-                        '<div style="margin-top:8px;font-size:34px;font-weight:800;color:#0F172A;">' + this.formatCurrency(totalExpense) + '</div>' +
-                        '<div style="margin-top:6px;font-size:13px;color:#64748B;">' + this.escapeHtml(activeFilterLabel) + '</div>' +
+            // === KPI GRID (3 esit kart, premium finans hissi) ===
+            '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:18px;">' +
+
+                // 1) TOPLAM GİDER — yeşil accent
+                '<div class="card" style="border-top:3px solid #22C55E;display:flex;flex-direction:column;min-height:128px;box-shadow:0 1px 3px rgba(15,23,42,0.04), 0 8px 24px -16px rgba(15,23,42,0.10);">' +
+                    '<div style="padding:18px 20px;display:flex;flex-direction:column;flex:1;">' +
+                        '<div style="font-size:11px;font-weight:800;color:#94A3B8;letter-spacing:.06em;text-transform:uppercase;">Toplam Gider</div>' +
+                        '<div id="exKpiValTotal" style="margin-top:10px;font-size:30px;font-weight:800;color:#0F172A;letter-spacing:-0.02em;line-height:1.1;">' + this.formatCurrency(totalExpense) + '</div>' +
+                        '<div id="exKpiSubTotal" style="margin-top:auto;padding-top:10px;font-size:12.5px;color:#64748B;font-weight:600;">' + this.escapeHtml(activeFilterLabel) + '</div>' +
                     '</div>' +
                 '</div>' +
-                '<div class="card" style="border-top:4px solid #EF4444;">' +
-                    '<div style="padding:16px 18px;">' +
-                        '<div style="font-size:12px;font-weight:700;color:#64748B;letter-spacing:.04em;">GÖRÜNEN KAYIT</div>' +
-                        '<div style="margin-top:8px;font-size:34px;font-weight:800;color:#0F172A;">' + Number(expenseCount).toLocaleString('tr-TR') + '</div>' +
-                        '<div style="margin-top:6px;font-size:13px;color:#64748B;">' + (this.filters.mode === 'monthly' ? 'Ay özeti' : 'Sayfadaki gider') + '</div>' +
+
+                // 2) GÖRÜNEN KAYIT — kırmızı accent
+                '<div class="card" style="border-top:3px solid #EF4444;display:flex;flex-direction:column;min-height:128px;box-shadow:0 1px 3px rgba(15,23,42,0.04), 0 8px 24px -16px rgba(15,23,42,0.10);">' +
+                    '<div style="padding:18px 20px;display:flex;flex-direction:column;flex:1;">' +
+                        '<div style="font-size:11px;font-weight:800;color:#94A3B8;letter-spacing:.06em;text-transform:uppercase;">Görünen Kayıt</div>' +
+                        '<div id="exKpiValCount" style="margin-top:10px;font-size:30px;font-weight:800;color:#0F172A;letter-spacing:-0.02em;line-height:1.1;">' + Number(expenseCount).toLocaleString('tr-TR') + '</div>' +
+                        '<div id="exKpiSubCount" style="margin-top:auto;padding-top:10px;font-size:12.5px;color:#64748B;font-weight:600;">' + (this.filters.mode === 'monthly' ? 'Ay özeti' : 'Sayfadaki gider') + '</div>' +
                     '</div>' +
                 '</div>' +
+
+                // 3) CİRO / GİDER ORANI — mavi accent (aylık)
+                '<div class="card" style="border-top:3px solid #2563EB;display:flex;flex-direction:column;min-height:128px;box-shadow:0 1px 3px rgba(15,23,42,0.04), 0 8px 24px -16px rgba(15,23,42,0.10);">' +
+                    '<div style="padding:18px 20px;display:flex;flex-direction:column;flex:1;">' +
+                        '<div style="font-size:11px;font-weight:800;color:#94A3B8;letter-spacing:.06em;text-transform:uppercase;">Ciro / Gider Oranı</div>' +
+                        '<div id="exKpiValRatio" style="margin-top:10px;font-size:30px;font-weight:800;color:#0F172A;letter-spacing:-0.02em;line-height:1.1;">' + ratioInfo.value + '</div>' +
+                        '<div id="exKpiSubRatio" style="margin-top:auto;padding-top:10px;font-size:12.5px;color:#64748B;font-weight:600;">' + this.escapeHtml(ratioInfo.label) + '</div>' +
+                    '</div>' +
+                '</div>' +
+
             '</div>' +
+
+            '<style>' +
+                '@media (max-width: 720px) {' +
+                    '.expenses-page-kpi-grid, [style*="grid-template-columns:repeat(3,minmax(0,1fr))"]{grid-template-columns:1fr !important;}' +
+                '}' +
+            '</style>' +
 
             '<div class="card" style="margin-top:18px;">' +
                 '<div class="card-header">' +
@@ -850,49 +1002,16 @@ window.ExpensesView = {
                     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">' +
                         '<button id="expenseDailyToggleBtn" type="button" class="card-action-btn' + ((this.filters.mode === 'daily' || this.filters.mode === 'custom') ? ' active' : '') + '" style="padding:10px 16px;font-weight:700;">Günlük</button>' +
                         '<button id="expenseMonthlyToggleBtn" type="button" class="card-action-btn' + (this.filters.mode === 'monthly' ? ' active' : '') + '" style="padding:10px 16px;font-weight:700;">Aylık</button>' +
-                        '<div style="padding:10px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;color:#475569;font-size:13px;font-weight:600;">Aktif filtre: ' + this.escapeHtml(activeFilterLabel) + '</div>' +
+                        '<div id="exFilterChip" style="padding:10px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;color:#475569;font-size:13px;font-weight:600;">Aktif filtre: ' + this.escapeHtml(activeFilterLabel) + '</div>' +
                     '</div>' +
 
-                    (this.isDateFilterVisible()
-                        ? '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:end;">' +
-                            '<div>' +
-                                '<label style="display:block;margin-bottom:6px;font-weight:600;">Başlangıç Tarihi</label>' +
-                                '<input id="filterStartDate" type="date" value="' + this.escapeHtml(this.filters.startDate || '') + '" style="width:100%;padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
-                            '</div>' +
-                            '<div>' +
-                                '<label style="display:block;margin-bottom:6px;font-weight:600;">Bitiş Tarihi</label>' +
-                                '<input id="filterEndDate" type="date" value="' + this.escapeHtml(this.filters.endDate || '') + '" style="width:100%;padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
-                            '</div>' +
-                            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-                                '<button id="applyExpenseFilterBtn" type="button" class="card-action-btn active" style="height:42px;padding:0 16px;">Filtrele</button>' +
-                                '<button id="resetExpenseFilterBtn" type="button" class="card-action-btn" style="height:42px;padding:0 16px;">Bugüne Dön</button>' +
-                            '</div>' +
-                            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-                                '<button id="expenseExcelExportBtn" type="button" class="card-action-btn" style="height:42px;padding:0 16px;font-weight:700;">Excel İndir</button>' +
-                            '</div>' +
-                        '</div>'
-                        : '<div style="padding:12px 14px;border:1px solid #E2E8F0;border-radius:12px;background:#F8FAFC;color:#475569;font-size:14px;font-weight:600;">Aylık görünümde her satır bir ayı temsil eder. Görüntüle ile o aya ait günlük toplamlar açılır.</div>'
-                    ) +
+                    '<div id="exFilterRowHost">' + this._buildFilterRowHtml() + '</div>' +
 
-                    '<div style="margin-top:16px;overflow:auto;">' +
+                    '<div id="exTableHost" style="margin-top:16px;overflow:auto;">' +
                         (this.filters.mode === 'monthly' ? this.buildMonthlySummaryTable() : this.buildExpensesTable()) +
                     '</div>' +
 
-                    '<div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">' +
-                        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
-                            '<span style="font-size:14px;font-weight:600;color:#475569;">Sayfa başı</span>' +
-                            '<select id="expensePageSizeSelect" style="padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
-                                this.buildPageSizeOptions() +
-                            '</select>' +
-                            '<span style="font-size:14px;color:#64748B;">' + this.pagination.from + '-' + this.pagination.to + ' / ' + this.pagination.totalCount + ' kayıt</span>' +
-                        '</div>' +
-
-                        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                            '<button id="expensePrevPageBtn" type="button" class="card-action-btn" ' + (this.pagination.page <= 1 ? 'disabled' : '') + ' style="padding:10px 14px;' + (this.pagination.page <= 1 ? 'opacity:.5;cursor:not-allowed;' : '') + '">Önceki</button>' +
-                            '<div style="padding:10px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;font-weight:700;color:#0F172A;">Sayfa ' + this.pagination.page + ' / ' + this.pagination.totalPages + '</div>' +
-                            '<button id="expenseNextPageBtn" type="button" class="card-action-btn" ' + (this.pagination.page >= this.pagination.totalPages ? 'disabled' : '') + ' style="padding:10px 14px;' + (this.pagination.page >= this.pagination.totalPages ? 'opacity:.5;cursor:not-allowed;' : '') + '">Sonraki</button>' +
-                        '</div>' +
-                    '</div>' +
+                    '<div id="exPagFooter" style="margin-top:16px;">' + this._buildPaginationFooterHtml() + '</div>' +
                 '</div>' +
             '</div>' +
 
@@ -900,6 +1019,170 @@ window.ExpensesView = {
             this.buildViewModal() +
             this.buildConfirmModal() +
             this.buildToast();
+
+        this._skeletonMounted = true;
+    },
+
+    /* ============================================================
+       PARTIAL DOM UPDATE HELPERS
+       Filter / pagination / data degistiginde full innerHTML rebuild
+       yerine sadece degisen alanlari guncelle. Modal/header/skeleton
+       yeniden olusturulmaz → blink/flicker yok, focus kaybolmaz.
+       ============================================================ */
+
+    _buildFilterRowHtml() {
+        if (this.isDateFilterVisible()) {
+            return '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;align-items:end;">' +
+                '<div>' +
+                    '<label style="display:block;margin-bottom:6px;font-weight:600;">Başlangıç Tarihi</label>' +
+                    '<input id="filterStartDate" type="date" value="' + this.escapeHtml(this.filters.startDate || '') + '" style="width:100%;padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
+                '</div>' +
+                '<div>' +
+                    '<label style="display:block;margin-bottom:6px;font-weight:600;">Bitiş Tarihi</label>' +
+                    '<input id="filterEndDate" type="date" value="' + this.escapeHtml(this.filters.endDate || '') + '" style="width:100%;padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
+                '</div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                    '<button id="applyExpenseFilterBtn" type="button" class="card-action-btn active" style="height:42px;padding:0 16px;">Filtrele</button>' +
+                    '<button id="resetExpenseFilterBtn" type="button" class="card-action-btn" style="height:42px;padding:0 16px;">Bugüne Dön</button>' +
+                '</div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                    '<button id="expenseExcelExportBtn" type="button" class="card-action-btn" style="height:42px;padding:0 16px;font-weight:700;">Excel İndir</button>' +
+                '</div>' +
+            '</div>';
+        }
+        return '<div style="padding:12px 14px;border:1px solid #E2E8F0;border-radius:12px;background:#F8FAFC;color:#475569;font-size:14px;font-weight:600;">Aylık görünümde her satır bir ayı temsil eder. Görüntüle ile o aya ait günlük toplamlar açılır.</div>';
+    },
+
+    _buildPaginationFooterHtml() {
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">' +
+            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+                '<span style="font-size:14px;font-weight:600;color:#475569;">Sayfa başı</span>' +
+                '<select id="expensePageSizeSelect" style="padding:10px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
+                    this.buildPageSizeOptions() +
+                '</select>' +
+                '<span style="font-size:14px;color:#64748B;">' + this.pagination.from + '-' + this.pagination.to + ' / ' + this.pagination.totalCount + ' kayıt</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                '<button id="expensePrevPageBtn" type="button" class="card-action-btn" ' + (this.pagination.page <= 1 ? 'disabled' : '') + ' style="padding:10px 14px;' + (this.pagination.page <= 1 ? 'opacity:.5;cursor:not-allowed;' : '') + '">Önceki</button>' +
+                '<div style="padding:10px 14px;border:1px solid #E2E8F0;border-radius:10px;background:#F8FAFC;font-weight:700;color:#0F172A;">Sayfa ' + this.pagination.page + ' / ' + this.pagination.totalPages + '</div>' +
+                '<button id="expenseNextPageBtn" type="button" class="card-action-btn" ' + (this.pagination.page >= this.pagination.totalPages ? 'disabled' : '') + ' style="padding:10px 14px;' + (this.pagination.page >= this.pagination.totalPages ? 'opacity:.5;cursor:not-allowed;' : '') + '">Sonraki</button>' +
+            '</div>' +
+        '</div>';
+    },
+
+    _setText(id, text) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = text;
+    },
+
+    _setHtml(id, html) {
+        var el = document.getElementById(id);
+        if (el) el.innerHTML = html;
+    },
+
+    _softUpdate() {
+        if (!this._skeletonMounted || !this._isActive || !this.container) {
+            // Skeleton yoksa first mount yap
+            this.renderPage();
+            this.bindEvents();
+            return;
+        }
+
+        var totalExpense = this.getVisibleTotalExpense();
+        var expenseCount = this.getVisibleExpenseCount();
+        var activeFilterLabel = this.getActiveFilterLabel();
+        var ratioInfo = this._getMonthlyRatioDisplay();
+
+        // 1) KPI metinleri (text-only — repaint cüzi)
+        this._setText('exKpiValTotal',  this.formatCurrency(totalExpense));
+        this._setText('exKpiSubTotal',  activeFilterLabel);
+        this._setText('exKpiValCount',  Number(expenseCount).toLocaleString('tr-TR'));
+        this._setText('exKpiSubCount',  this.filters.mode === 'monthly' ? 'Ay özeti' : 'Sayfadaki gider');
+        this._setText('exKpiValRatio',  ratioInfo.value);
+        this._setText('exKpiSubRatio',  ratioInfo.label);
+
+        // 2) Active filter chip
+        this._setText('exFilterChip', 'Aktif filtre: ' + activeFilterLabel);
+
+        // 3) Toggle button active class
+        var dEl = document.getElementById('expenseDailyToggleBtn');
+        var mEl = document.getElementById('expenseMonthlyToggleBtn');
+        if (dEl) dEl.classList.toggle('active', (this.filters.mode === 'daily' || this.filters.mode === 'custom'));
+        if (mEl) mEl.classList.toggle('active', this.filters.mode === 'monthly');
+
+        // 4) Filter row (date inputs vs monthly hint) — sadece mode değiştiyse rebuild
+        if (this._lastFilterMode !== this.filters.mode) {
+            this._setHtml('exFilterRowHost', this._buildFilterRowHtml());
+            this._bindFilterRowEvents();
+            this._lastFilterMode = this.filters.mode;
+        } else {
+            // Aynı moddaysa sadece input value'ları senkronize et
+            var sEl = document.getElementById('filterStartDate');
+            var eEl = document.getElementById('filterEndDate');
+            if (sEl && document.activeElement !== sEl) sEl.value = this.filters.startDate || '';
+            if (eEl && document.activeElement !== eEl) eEl.value = this.filters.endDate || '';
+        }
+
+        // 5) Tablo (tbody + table komple)
+        this._setHtml('exTableHost', this.filters.mode === 'monthly' ? this.buildMonthlySummaryTable() : this.buildExpensesTable());
+        this._bindRowActions();
+
+        // 6) Pagination footer
+        this._setHtml('exPagFooter', this._buildPaginationFooterHtml());
+        this._bindPaginationEvents();
+    },
+
+    _bindRowActions() {
+        var self = this;
+        document.querySelectorAll('.expense-view-btn').forEach(function (btn) {
+            btn.onclick = function () { self.handleViewExpense(this.dataset.id); };
+        });
+        document.querySelectorAll('.expense-delete-btn').forEach(function (btn) {
+            btn.onclick = function () { self.openConfirmModal(this.dataset.id); };
+        });
+        document.querySelectorAll('.expense-month-view-btn').forEach(function (btn) {
+            btn.onclick = function () { self.handleViewMonth(this.dataset.month); };
+        });
+    },
+
+    _bindFilterRowEvents() {
+        var self = this;
+        var apply  = document.getElementById('applyExpenseFilterBtn');
+        var reset  = document.getElementById('resetExpenseFilterBtn');
+        var excel  = document.getElementById('expenseExcelExportBtn');
+
+        if (apply) apply.onclick = function () { self.pagination.page = 1; self.applyFilters(); };
+        if (reset) reset.onclick = function () { self.pagination.page = 1; self.resetFilters(); };
+        if (excel) excel.onclick = function () { self.handleExcelExport(); };
+    },
+
+    _bindPaginationEvents() {
+        var self = this;
+        var ps   = document.getElementById('expensePageSizeSelect');
+        var prev = document.getElementById('expensePrevPageBtn');
+        var next = document.getElementById('expenseNextPageBtn');
+
+        if (ps) ps.onchange = async function () {
+            self.pagination.pageSize = Number(this.value || 10);
+            self.pagination.page = 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self._softUpdate();
+        };
+        if (prev) prev.onclick = async function () {
+            if (self.pagination.page <= 1) return;
+            self.pagination.page -= 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self._softUpdate();
+        };
+        if (next) next.onclick = async function () {
+            if (self.pagination.page >= self.pagination.totalPages) return;
+            self.pagination.page += 1;
+            await self.loadExpenses();
+            if (!self._isActive) return;
+            self._softUpdate();
+        };
     },
 
     buildPageSizeOptions() {
@@ -1192,8 +1475,7 @@ window.ExpensesView = {
             self.pagination.page = 1;
             await self.loadExpenses();
             if (!self._isActive) return;
-            self.renderPage();
-            self.bindEvents();
+            self._softUpdate();
         });
 
         this._on(document.getElementById('expensePrevPageBtn'), 'click', async function () {
@@ -1201,8 +1483,7 @@ window.ExpensesView = {
             self.pagination.page -= 1;
             await self.loadExpenses();
             if (!self._isActive) return;
-            self.renderPage();
-            self.bindEvents();
+            self._softUpdate();
         });
 
         this._on(document.getElementById('expenseNextPageBtn'), 'click', async function () {
@@ -1210,8 +1491,7 @@ window.ExpensesView = {
             self.pagination.page += 1;
             await self.loadExpenses();
             if (!self._isActive) return;
-            self.renderPage();
-            self.bindEvents();
+            self._softUpdate();
         });
 
         this._on(document.getElementById('closeExpenseViewModalBtn'), 'click', function () {
@@ -1312,10 +1592,11 @@ window.ExpensesView = {
                 return Math.max(max, Number(item.sort_order || 0));
             }, 0);
 
+            var tenantId = await this.tenantId();
             var inserted = await this.client()
                 .from('categories')
                 .insert({
-                    tenant_id: this.tenantId(),
+                    tenant_id: tenantId,
                     name: name,
                     color: color,
                     type: 'expense',
@@ -1403,8 +1684,11 @@ window.ExpensesView = {
 
             await this.loadExpenses();
             if (!this._isActive) return;
-            this.renderPage();
-            this.bindEvents();
+            this._softUpdate();
+
+            // Yeni gider eklendi → aylik ratio yeniden hesaplansin
+            this._monthlyRatioKey = '';
+            this.loadMonthlyRatio();
 
             if (window.AnalyticsService && typeof window.AnalyticsService.getDashboardAnalytics === 'function') {
                 window.STATE.dashboardData = null;
@@ -1437,8 +1721,8 @@ window.ExpensesView = {
 
         await this.loadExpenses();
         if (!this._isActive) return;
-        this.renderPage();
-        this.bindEvents();
+        this._softUpdate();
+        this.loadMonthlyRatio();
     },
 
     async resetFilters() {
@@ -1450,8 +1734,8 @@ window.ExpensesView = {
 
         await this.loadExpenses();
         if (!this._isActive) return;
-        this.renderPage();
-        this.bindEvents();
+        this._softUpdate();
+        this.loadMonthlyRatio();
     },
 
     resetExpenseForm() {
@@ -1564,8 +1848,11 @@ window.ExpensesView = {
 
             await this.loadExpenses();
             if (!this._isActive) return;
-            this.renderPage();
-            this.bindEvents();
+            this._softUpdate();
+
+            // Silme sonrası ratio yenile
+            this._monthlyRatioKey = '';
+            this.loadMonthlyRatio();
 
             if (window.AnalyticsService && typeof window.AnalyticsService.getDashboardAnalytics === 'function') {
                 window.STATE.dashboardData = null;

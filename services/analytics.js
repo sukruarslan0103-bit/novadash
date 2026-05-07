@@ -255,27 +255,6 @@ window.AnalyticsService = {
         return result;
     },
 
-    async getTasksTodayCount() {
-        var res = await this.client()
-            .from('tasks')
-            .select('id', { count: 'exact', head: true })
-            .eq('tenant_id', this.tenantId())
-            .eq('due_date', this.today());
-
-        this.assertResponse(res, 'Bugünkü görev sayısı alınamadı');
-        return res.count || 0;
-    },
-
-    async getAllTasks() {
-        var res = await this.client()
-            .from('tasks')
-            .select('id,due_date,status,priority,title')
-            .eq('tenant_id', this.tenantId());
-
-        this.assertResponse(res, 'Görevler alınamadı');
-        return res.data || [];
-    },
-
     /* ============================================================
        MATH HELPERS
     ============================================================ */
@@ -422,17 +401,6 @@ window.AnalyticsService = {
             });
         }
 
-        var overdueTasks = (ctx.tasks || []).filter(function (t) {
-            return t.status !== 'done' && t.due_date && t.due_date < ctx.today;
-        });
-
-        if (overdueTasks.length > 0) {
-            alerts.push({
-                type: 'warning',
-                text: overdueTasks.length + ' adet gecikmiş görev var.'
-            });
-        }
-
         if (alerts.length === 0) {
             alerts.push({
                 type: 'success',
@@ -572,15 +540,14 @@ window.AnalyticsService = {
         // Yerel hesaplamalar için tarih (DB artık almıyor — client'ta kullanılıyor)
         var today = this.today();
 
-        // === SINGLE UNIFIED RPC — analytics + alerts_master tek çağrıda ===
+        // === DASHBOARD ANALYTICS RPC ===
         var res;
         try {
-            res = await this.client().rpc('get_dashboard_with_alerts', {
+            res = await this.client().rpc('get_dashboard_analytics', {
                 p_start: start,
                 p_end: end
             });
         } catch (err) {
-            console.warn('[analytics] get_dashboard_with_alerts rpc threw:', err && err.message ? err.message : err);
             res = { data: null, error: err };
         }
 
@@ -662,10 +629,6 @@ window.AnalyticsService = {
             };
         });
 
-        // === TASKS ===
-        var tasksToday = Number(d.tasks_today_count || 0);
-        var allTasks = d.all_tasks || [];
-
         // === ALERTS, ANALYSIS, HEALTH SCORE ===
         var averageWeeklySales = this.average(
             weeklySales.map(function (s) { return s.amount; })
@@ -678,7 +641,6 @@ window.AnalyticsService = {
             monthlyExpenseChange: monthlyExpenseChange,
             monthlyProfitChange: monthlyProfitChange,
             monthlyRevenue: monthlyRevenue,
-            tasks: allTasks,
             today: today
         });
 
@@ -699,45 +661,6 @@ window.AnalyticsService = {
             monthlyProfit: monthlyProfit,
             alerts: alerts
         });
-
-        // === ALERTS MASTER (decision cards) — RPC içinden ===
-        // Defansif parser: ne format gelirse gelsin ARRAY garantisi
-        function _coerceArray(v) {
-            if (!v) return [];
-            if (Array.isArray(v)) return v;
-            if (typeof v === 'string') {
-                try {
-                    var parsed = JSON.parse(v);
-                    return Array.isArray(parsed) ? parsed : [];
-                } catch (e) { return []; }
-            }
-            if (typeof v === 'object') {
-                if (Array.isArray(v.rows))           return v.rows;
-                if (Array.isArray(v.data))           return v.data;
-                if (Array.isArray(v.items))          return v.items;
-                if (Array.isArray(v.alerts_master)) return v.alerts_master;
-            }
-            return [];
-        }
-
-        var rawAm = d.alerts_master;
-        var alertsMaster = _coerceArray(rawAm);
-
-        // FAILSAFE — object icinde gizli array varsa yakala
-        if (!alertsMaster.length && rawAm && typeof rawAm === 'object') {
-            alertsMaster = Object.values(rawAm).find(Array.isArray) || [];
-        }
-        // Fallback kaynaklar
-        if (!alertsMaster.length) {
-            alertsMaster = _coerceArray(d.product_priority);
-        }
-
-        d.alerts_master = alertsMaster;
-
-        console.log('[analytics] alerts_master count:', alertsMaster.length,
-                    '| raw type:', typeof rawAm,
-                    '| sample:', alertsMaster[0] || null,
-                    '| raw:', rawAm);
 
         return {
             monthly: {
@@ -767,11 +690,7 @@ window.AnalyticsService = {
             topProducts: topProducts,
             alerts: alerts,
             analysis: analysis,
-            healthScore: healthScore,
-            taskCount: tasksToday,
-            tasks: allTasks,
-            alerts_master: alertsMaster,
-            product_priority: alertsMaster
+            healthScore: healthScore
         };
     }
 };

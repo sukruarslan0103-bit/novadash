@@ -28,9 +28,7 @@
                 <a href="#sales" class="nav-link" data-view="sales">Satışlar</a>
                 <a href="#products" class="nav-link" data-view="products">Ürünler</a>
                 <a href="#expenses" class="nav-link" data-view="expenses">Giderler</a>
-                <a href="#health" class="nav-link" data-view="health">Saglik Raporu</a>
-                <a href="#tasks" class="nav-link" data-view="tasks">Görevler</a>
-                <a href="#reports" class="nav-link" data-view="reports">Raporlar</a>
+                <a href="#health" class="nav-link" data-view="health">Nabız</a>
                 <a href="#settings" class="nav-link" data-view="settings">Ayarlar</a>
             </nav>
         </div>
@@ -68,23 +66,21 @@
         <div class="sub-left">
             <h1 class="business-name" id="businessName">Holly Stone Adana</h1>
         </div>
-        <div class="sub-center">
-            <div class="today-tasks">
-                <span class="tasks-label">Bugünün Görev Planı</span>
-                <span class="tasks-count" id="taskCount">3 görev</span>
-            </div>
-        </div>
+        <div class="sub-center"></div>
         <div class="sub-right">
-            <div class="health-score">
+            <a href="#health" class="health-score" id="navbarHealthBeacon" aria-label="Nabız" style="text-decoration:none;color:inherit;">
                 <div class="health-ring">
                     <svg viewBox="0 0 36 36">
                         <path class="health-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
-                        <path class="health-fill" stroke-dasharray="78, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
+                        <path class="health-fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
                     </svg>
-                    <span class="health-value">78</span>
+                    <span class="health-pulse-dot"></span>
+                    <span class="health-value">—</span>
                 </div>
-                <span class="health-label">Sağlık Skoru</span>
-            </div>
+                <div class="health-meta">
+                    <span class="health-label">Veri Bekleniyor</span>
+                </div>
+            </a>
         </div>
     </div>
 
@@ -98,6 +94,59 @@
     <script src="js/cache.js"></script>
     <script src="utils/toast.js"></script>
     <script src="js/core/error-handler.js"></script>
+
+    <!-- Global Nabız navbar beacon — tek source of truth -->
+    <script>
+    (function () {
+        // 4-katmanlı sağlık paleti (Hero ile birebir tutarlı)
+        function colorOf(s) {
+            if (s >= 90) return '#16a34a'; // yeşil — mükemmel
+            if (s >= 75) return '#2563eb'; // mavi  — stabil
+            if (s >= 50) return '#d97706'; // amber — izlenmeli
+            return '#dc2626';              // kırmızı — kritik
+        }
+        function microOf(s, hasData) {
+            if (!hasData) return 'Veri Bekleniyor';
+            if (s >= 90) return 'Mükemmel';
+            if (s >= 75) return 'Stabil';
+            if (s >= 50) return 'İzlenmeli';
+            return 'Kritik';
+        }
+        window.HealthIndicator = {
+            _last: null,
+            set: function (score, hasData) {
+                var s = Number(score) || 0;
+                var has = (hasData !== false) && (s > 0 || hasData === true);
+                this._last = { score: s, hasData: has };
+
+                var v = document.querySelector('#navbarHealthBeacon .health-value');
+                var f = document.querySelector('#navbarHealthBeacon .health-fill');
+                var d = document.querySelector('#navbarHealthBeacon .health-pulse-dot');
+                var l = document.querySelector('#navbarHealthBeacon .health-label');
+
+                var color = colorOf(s);
+                var micro = microOf(s, has);
+
+                if (v) v.textContent = has ? s : '—';
+                if (f) {
+                    f.setAttribute('stroke-dasharray', (has ? s : 0) + ', 100');
+                    f.setAttribute('stroke', color);
+                }
+                if (d) {
+                    d.style.background = color;
+                    d.style.color = color; // currentColor for box-shadow
+                    d.classList.toggle('critical', has && s < 50);
+                }
+                if (l) l.textContent = micro;
+            },
+            // Tab değişiminde son skor varsa tekrar uygula (loading state'i önler)
+            reapply: function () {
+                if (this._last) this.set(this._last.score, this._last.hasData);
+            }
+        };
+    })();
+    </script>
+
     <script src="services/supabase.js"></script>
 
     <script src="utils/formatters.js"></script>
@@ -107,8 +156,6 @@
     <script src="services/sales.js"></script>
     <script src="services/expenses.js"></script>
     <script src="services/products.js"></script>
-    <script src="services/tasks.js"></script>
-    <script src="services/events.js"></script>
     <script src="services/analytics.js?v=2"></script>
 
     <script src="views/dashboard-view.js"></script>
@@ -117,10 +164,7 @@
     <script src="views/products-view.js"></script>
     <script src="views/raw-materials-view.js"></script>
     <script src="views/stock-view.js"></script>
-    <script src="views/calendar-view.js"></script>
-    <script src="views/tasks-view.js"></script>
     <script src="views/health-view.js"></script>
-    <script src="views/reports-view.js?v=17"></script>
     <script src="views/transfer-view.js"></script>
     <script src="views/settings-view.js"></script>
 

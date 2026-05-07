@@ -554,7 +554,7 @@ window.ImportExport = (function () {
     const BACKUP_REQUIRED_TABLES = [
         'categories', 'products', 'sales', 'product_sales',
         'purchase_items', 'raw_materials',
-        'expenses', 'events', 'tasks', 'settings'
+        'expenses', 'settings'
     ];
 
     function backupClient() {

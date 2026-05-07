@@ -17,6 +17,14 @@ window.ExpensesService = (function () {
         _cache.key = null;
         _cache.data = null;
         _cache.ts = 0;
+
+        // ViewCache'i de temizle — dashboard ve expenses view'i stale veri gostermesin
+        if (window.ViewCache && typeof window.ViewCache.invalidate === 'function') {
+            try {
+                window.ViewCache.invalidate('expenses-view:');
+                window.ViewCache.invalidate('dashboard:');
+            } catch (e) { /* noop */ }
+        }
     }
 
     var _cache = {

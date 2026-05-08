@@ -650,11 +650,13 @@ body::before {
    override'i kullaniliyor (yukaridaki R3 blogunda). */
 
 .kpi-title {
-    font-size: 0.78rem;
+    /* R3.1: Washed-out muted -> guclu secondary. Hierarchy:
+       value (primary) > title (strong secondary) > supporting (tertiary). */
+    font-size: 0.82rem;
     font-weight: 800;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.06em;
 }
 
 /* Aylık / Günlük Toggle */
@@ -716,8 +718,10 @@ body::before {
 .kpi-trend.down { color: #be123c; background: var(--red-light); }
 
 .kpi-trend-label {
-    font-size: 0.8rem;
-    color: var(--text-muted);
+    /* R3.1: muted -> secondary, kontrast +. Trend chip'le yarismaz cunku
+       chip semantic renkli; supporting text neutral readable. */
+    font-size: 0.83rem;
+    color: var(--text-secondary);
     font-weight: 600;
 }
 

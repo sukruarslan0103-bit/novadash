@@ -147,21 +147,21 @@ window.DashboardView = {
         var monthlyActive = (period === 'monthly') ? ' active' : '';
         var dailyActive = (period === 'daily') ? ' active' : '';
 
-        // R1: Welcome hero — STATE.user.name'den isim cek, yoksa "Kullanıcı".
-        // Period toggle V1.4'te .kpi-toolbar'daydi; R1'de hero'nun sag tarafina tasindi.
-        // ID/class korundugu icin bindGlobalKpiToggle() farkinda olmadan calismaya devam eder.
-        var userName = (window.STATE && window.STATE.user && window.STATE.user.name)
-            ? String(window.STATE.user.name)
-            : 'Kullanıcı';
-        var safeName = (window.Formatters && window.Formatters.escapeHtml)
-            ? window.Formatters.escapeHtml(userName)
-            : userName;
+        // R1.1: Hero hierarchy — birincil kimlik ISLETME ADI (tenant.name).
+        // Kullanici adi sub-header / topbar profile chip'inde zaten gosteriliyor.
+        // Sub-header'daki duplicate business-name R1.1 CSS ile globally hidden.
+        var tenantName = (window.STATE && window.STATE.tenant && window.STATE.tenant.name)
+            ? String(window.STATE.tenant.name)
+            : 'İŞLETME';
+        var safeTenant = (window.Formatters && window.Formatters.escapeHtml)
+            ? window.Formatters.escapeHtml(tenantName)
+            : tenantName;
 
         container.innerHTML =
             '<header class="dashboard-hero">' +
                 '<div class="dashboard-hero-text">' +
-                    '<h1 class="dashboard-hero-title">Hoş geldin, ' + safeName + '! <span aria-hidden="true">👋</span></h1>' +
-                    '<p class="dashboard-hero-subtitle">İşletmenin nabzını birlikte tutuyoruz.</p>' +
+                    '<h1 class="dashboard-hero-title">' + safeTenant + '</h1>' +
+                    '<p class="dashboard-hero-subtitle">Bugünkü operasyon özeti hazır.</p>' +
                 '</div>' +
                 '<div class="dashboard-hero-toolbar">' +
                     '<div class="kpi-toggle-group" id="globalKpiToggle">' +

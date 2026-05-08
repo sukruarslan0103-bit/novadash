@@ -390,11 +390,12 @@ body {
 }
 
 .dashboard-hero-title {
-    font-size: 26px;
+    /* R1.1: Tenant name primary identity — daha dominant typography. */
+    font-size: 30px;
     font-weight: 800;
     color: var(--text-primary);
-    letter-spacing: -0.02em;
-    line-height: 1.15;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
     margin: 0 0 6px 0;
 }
 
@@ -403,6 +404,14 @@ body {
     margin-left: 4px;
     /* Emoji baseline align — Inter ile karisik yer almasin */
     transform: translateY(-1px);
+}
+
+/* R1.1: Sub-header'daki duplicate business-name gizli.
+   Tenant name artik dashboard-hero-title'da yasiyor. .sub-header'in geri
+   kalan yapisi (Nabiz beacon vs.) korunur. Diger view'ler kendi page
+   title'larini kendi container'larinda render eder. */
+.sub-header .business-name {
+    display: none;
 }
 
 .dashboard-hero-subtitle {
@@ -425,7 +434,7 @@ body {
         gap: 14px;
     }
     .dashboard-hero-title {
-        font-size: 22px;
+        font-size: 24px;
     }
 }
 

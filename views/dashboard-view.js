@@ -399,21 +399,19 @@ window.DashboardView = {
             ? nonZero.reduce(function (a, b) { return a + b; }, 0) / nonZero.length
             : 0;
 
-        // V1.2: Static bar gradient — top a tik dogun, bottom a tik acik.
-        // Canvas gradient sadece chartArea hesaplandiktan sonra olusur;
-        // ilk render'da chartArea yoksa fallback solid renk.
-        function barGradient(context) {
+        // R4: Area gradient fill — top emerald 0.18 → bottom transparent.
+        // Mockup ~0.40+ idi; B disiplini ile %35 dial-down.
+        function areaGradient(context) {
             var chart = context.chart;
             var area = chart.chartArea;
-            if (!area) return 'rgba(52, 199, 89, 0.85)';
+            if (!area) return 'rgba(16, 185, 129, 0.10)';
             var g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
-            g.addColorStop(0, 'rgba(52, 199, 89, 0.95)');
-            g.addColorStop(1, 'rgba(52, 199, 89, 0.65)');
+            g.addColorStop(0, 'rgba(16, 185, 129, 0.18)');
+            g.addColorStop(1, 'rgba(16, 185, 129, 0)');
             return g;
         }
 
-        // V1.2: Average line plugin — dashed neutral reference,
-        // dominant degil, sadece "iyi gun mu kotu gun mu" anchor'i.
+        // V1.2: Average line plugin — dashed neutral reference, dominant degil.
         var avgLinePlugin = {
             id: 'avgLine',
             afterDatasetsDraw: function (chart) {
@@ -426,7 +424,7 @@ window.DashboardView = {
 
                 var c = chart.ctx;
                 c.save();
-                c.strokeStyle = 'rgba(15, 23, 42, 0.22)';
+                c.strokeStyle = 'rgba(15, 23, 42, 0.20)';
                 c.setLineDash([4, 4]);
                 c.lineWidth = 1;
                 c.beginPath();
@@ -435,7 +433,6 @@ window.DashboardView = {
                 c.stroke();
                 c.setLineDash([]);
 
-                // Sag uca kucuk "Ort." etiketi
                 c.font = '600 10px Inter, system-ui, sans-serif';
                 c.fillStyle = 'rgba(15, 23, 42, 0.45)';
                 c.textAlign = 'right';
@@ -445,18 +442,32 @@ window.DashboardView = {
             }
         };
 
+        // R4: Bar -> Line. Smooth bezier (tension 0.4) + gradient fill +
+        // beyaz core dots emerald borderli. Constant glow YOK; hover'da
+        // dot soft shadow (B disiplini, mockup'tan %35 asagi).
         window.STATE.charts.salesChart = new Chart(ctx, {
-            type: 'bar',
+            type: 'line',
             data: {
                 labels: weekly.map(function (s) { return s.day; }),
                 datasets: [{
                     label: 'Ciro',
                     data: values,
-                    backgroundColor: barGradient,
-                    hoverBackgroundColor: barGradient,
-                    borderRadius: 8,
-                    borderSkipped: false,
-                    maxBarThickness: 56
+                    borderColor: '#10B981',
+                    borderWidth: 2.5,
+                    backgroundColor: areaGradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: '#FFFFFF',
+                    pointBorderColor: '#10B981',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    pointHoverBorderWidth: 2.5,
+                    pointHoverBackgroundColor: '#FFFFFF',
+                    pointHoverBorderColor: '#10B981',
+                    pointHitRadius: 14,
+                    spanGaps: true,
+                    cubicInterpolationMode: 'monotone'
                 }]
             },
             options: {
@@ -466,22 +477,30 @@ window.DashboardView = {
                     duration: 600,
                     easing: 'easeOutQuart'
                 },
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
                 plugins: {
                     legend: { display: false },
-                    // V1.2: Dark premium tooltip
+                    // R4: Tooltip — V1.2 dark dilini koru, padding/radius
+                    // refine + soft shadow ekle (Chart.js native shadow yok,
+                    // cornerRadius bumped + caretSize tweaked).
                     tooltip: {
                         enabled: true,
                         backgroundColor: '#0F172A',
                         titleColor: '#F8FAFC',
                         bodyColor: '#E2E8F0',
                         titleFont: { family: 'Inter, system-ui, sans-serif', size: 12, weight: '700' },
-                        bodyFont: { family: 'Inter, system-ui, sans-serif', size: 13, weight: '600' },
-                        padding: { x: 12, y: 10 },
-                        cornerRadius: 8,
+                        bodyFont: { family: 'Inter, system-ui, sans-serif', size: 14, weight: '700' },
+                        padding: { x: 14, y: 12 },
+                        cornerRadius: 10,
                         displayColors: false,
                         borderColor: 'rgba(255, 255, 255, 0.06)',
                         borderWidth: 1,
                         boxPadding: 4,
+                        caretPadding: 8,
+                        caretSize: 6,
                         callbacks: {
                             label: function (item) {
                                 return '₺' + (Number(item.parsed.y) || 0).toLocaleString('tr-TR');
@@ -494,24 +513,25 @@ window.DashboardView = {
                         beginAtZero: true,
                         border: { display: false },
                         grid: {
-                            color: 'rgba(15, 23, 42, 0.05)',
+                            // R4: Daha incelikli grid — 0.05 → 0.04 alpha
+                            color: 'rgba(15, 23, 42, 0.04)',
                             drawTicks: false
                         },
                         ticks: {
                             callback: function (val) { return '₺' + val.toLocaleString('tr-TR'); },
-                            font: { family: 'Inter, system-ui, sans-serif', size: 11, weight: '500' },
+                            font: { family: 'Inter, system-ui, sans-serif', size: 11, weight: '600' },
                             color: '#94A3B8',
-                            padding: 8
+                            padding: 12
                         }
                     },
                     x: {
-                        // V1.2: Visible baseline → bos gunler "kirik chart" hissi vermiyor.
-                        border: { color: 'rgba(15, 23, 42, 0.10)', width: 1 },
+                        // R4: Baseline daha incelikli — 0.10 → 0.08 alpha
+                        border: { color: 'rgba(15, 23, 42, 0.08)', width: 1 },
                         grid: { display: false },
                         ticks: {
                             font: { family: 'Inter, system-ui, sans-serif', size: 11, weight: '600' },
                             color: '#64748B',
-                            padding: 6
+                            padding: 8
                         }
                     }
                 }

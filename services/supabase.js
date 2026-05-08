@@ -83,19 +83,26 @@ window.SupabaseService = (function () {
             }
 
             // GLOBAL LISTENER — SIGNED_IN
-            // Kullanici gercek sayfasinda (#expenses, #products, vs.) iken
-            // tab focus / token refresh ile SIGNED_IN tekrar fire edebilir.
-            // safeNavigateToDashboard() yalnizca bos hash veya #login'da
-            // izin verir; aktif sayfayi ASLA override etmez.
+            // KRITIK: authenticated bayragini BURADAN set etme.
+            // Tek source-of-truth AppBootstrap.bootstrap() — tenant satiri
+            // cekilmeden authenticated=true olmamali. bootstrap idempotent;
+            // initApp / handleLogin / SIGNED_IN ayni anda tetiklense bile
+            // tek bir hydrate calisir.
             if (event === 'SIGNED_IN' && session) {
-                try { window.STATE.authenticated = true; } catch (e) {}
-                if (typeof window.safeNavigateToDashboard === 'function') {
-                    window.safeNavigateToDashboard();
+                if (window.AppBootstrap && typeof window.AppBootstrap.bootstrap === 'function') {
+                    window.AppBootstrap.bootstrap()
+                        .then(function (ok) {
+                            if (ok && typeof window.safeNavigateToDashboard === 'function') {
+                                window.safeNavigateToDashboard();
+                            }
+                        })
+                        .catch(function () { /* bootstrap kendi redirectToLogin'ini yapiyor */ });
                 }
             }
 
             if (event === 'SIGNED_OUT') {
                 window.STATE.authenticated = false;
+                window.STATE.tenantReady = false;
                 window.STATE.tenant.id = null;
                 window.STATE.tenant.name = '';
                 window.STATE.user.id = null;

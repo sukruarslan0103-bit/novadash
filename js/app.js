@@ -66,6 +66,7 @@
     function redirectToLogin() {
         if (window.STATE) {
             window.STATE.authenticated = false;
+            window.STATE.tenantReady = false;
             if (window.STATE.tenant) {
                 window.STATE.tenant.id = null;
                 window.STATE.tenant.name = '';
@@ -88,7 +89,35 @@
         return false;
     }
 
-    async function bootstrapSupabase() {
+    /* ============================================================
+       BOOTSTRAP — idempotent / singleton
+       Ayni anda initApp + SIGNED_IN + handleLogin tetiklense bile
+       gercek hydration sadece BIR kez calisir; digerleri ayni
+       in-flight promise'a baglanir.
+       Bittikten sonra promise serbest birakilir; logout sonrasi
+       yeni login icin tekrar calisabilir.
+    ============================================================ */
+    var _bootstrapPromise = null;
+
+    function bootstrapSupabase() {
+        if (_bootstrapPromise) {
+            return _bootstrapPromise;
+        }
+
+        // Zaten hazirsa no-op
+        if (window.STATE && window.STATE.authenticated && window.STATE.tenantReady) {
+            return Promise.resolve(true);
+        }
+
+        _bootstrapPromise = _bootstrapSupabaseInner()
+            .finally(function () {
+                _bootstrapPromise = null;
+            });
+
+        return _bootstrapPromise;
+    }
+
+    async function _bootstrapSupabaseInner() {
         if (!window.SupabaseService) {
             return redirectToLogin();
         }
@@ -139,10 +168,14 @@
 
             window.SupabaseService.setTenantCache(window.STATE.tenant.id);
 
-            window.STATE.authenticated = true;
+            // Onemli: authenticated ve tenantReady ayni anda, hydrate bittiginde set
             window.STATE.devMode = false;
+            window.STATE.authenticated = true;
+            window.STATE.tenantReady = true;
 
             applyUserAndTenantToUI();
+
+            try { window.dispatchEvent(new CustomEvent('tenant:ready', { detail: { id: window.STATE.tenant.id } })); } catch (e) { /* noop */ }
 
             return true;
 
@@ -196,7 +229,11 @@
     window.AppBootstrap = {
         afterLogin: afterLogin,
         logout: logout,
-        redirectToLogin: redirectToLogin
+        redirectToLogin: redirectToLogin,
+        bootstrap: bootstrapSupabase,
+        isReady: function () {
+            return !!(window.STATE && window.STATE.authenticated && window.STATE.tenantReady);
+        }
     };
 
     if (document.readyState === 'loading') {

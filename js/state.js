@@ -8,6 +8,11 @@ window.STATE = {
     authenticated: false,
     devMode: false,
 
+    // Tenant hydration readiness — true ONLY after bootstrap fetched tenant row.
+    // Tenant-scoped mutations (settings save, logo update, vb.) bu flag false iken
+    // calismamali. authenticated=true tek basina yeterli degil.
+    tenantReady: false,
+
     // Current tenant
     tenant: {
         id: null,

@@ -294,19 +294,30 @@ window.Router = {
             return;
         }
 
-        // 3) SUCCESS — cleanup + safe redirect
-        //    (hash su an #login -> safeNavigate izin verir)
+        // 3) SUCCESS — tenant hydrate AWAIT.
+        //    authenticated bayragini BURADA set etmiyoruz; bootstrap kendi
+        //    set ediyor (tenant satiri geldikten sonra). Boylece:
+        //      authenticated=true & tenant=null
+        //    araligi yok.
         this._cleanupLoginHandlers();
-        window.STATE.authenticated = true;
-        window.safeNavigateToDashboard();
 
-        // 4) afterLogin arka planda — login basarisi UI'da bloklanmasin
-        if (window.AppBootstrap && typeof window.AppBootstrap.afterLogin === 'function') {
-            Promise.resolve()
-                .then(function () { return window.AppBootstrap.afterLogin(); })
-                .catch(function (e) {
-                    if (window.__DEBUG__) console.error('[Router] afterLogin failed:', e);
-                });
+        try {
+            if (window.AppBootstrap && typeof window.AppBootstrap.afterLogin === 'function') {
+                await window.AppBootstrap.afterLogin();
+            } else {
+                // AppBootstrap yoksa fallback (degismez minimum)
+                window.STATE.authenticated = true;
+                window.safeNavigateToDashboard();
+            }
+        } catch (e) {
+            if (window.__DEBUG__) console.error('[Router] afterLogin failed:', e);
+        } finally {
+            // Login basarisizsa redirectToLogin login ekranini tekrar render eder;
+            // basariliysa dashboard render olur. Buton DOM'da hala duruyorsa reset.
+            if (btnEl && document.body.contains(btnEl)) {
+                btnEl.disabled = false;
+                btnEl.textContent = 'Giriş Yap';
+            }
         }
     },
 

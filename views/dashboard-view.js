@@ -147,14 +147,29 @@ window.DashboardView = {
         var monthlyActive = (period === 'monthly') ? ' active' : '';
         var dailyActive = (period === 'daily') ? ' active' : '';
 
+        // R1: Welcome hero — STATE.user.name'den isim cek, yoksa "Kullanıcı".
+        // Period toggle V1.4'te .kpi-toolbar'daydi; R1'de hero'nun sag tarafina tasindi.
+        // ID/class korundugu icin bindGlobalKpiToggle() farkinda olmadan calismaya devam eder.
+        var userName = (window.STATE && window.STATE.user && window.STATE.user.name)
+            ? String(window.STATE.user.name)
+            : 'Kullanıcı';
+        var safeName = (window.Formatters && window.Formatters.escapeHtml)
+            ? window.Formatters.escapeHtml(userName)
+            : userName;
+
         container.innerHTML =
-            // V1.4: Tek global KPI period selector (eskiden her kartta ayri ayriydi).
-            '<div class="kpi-toolbar">' +
-                '<div class="kpi-toggle-group" id="globalKpiToggle">' +
-                    '<button class="kpi-toggle-btn' + monthlyActive + '" data-period="monthly" type="button">Aylık</button>' +
-                    '<button class="kpi-toggle-btn' + dailyActive + '" data-period="daily" type="button">Günlük</button>' +
+            '<header class="dashboard-hero">' +
+                '<div class="dashboard-hero-text">' +
+                    '<h1 class="dashboard-hero-title">Hoş geldin, ' + safeName + '! <span aria-hidden="true">👋</span></h1>' +
+                    '<p class="dashboard-hero-subtitle">İşletmenin nabzını birlikte tutuyoruz.</p>' +
                 '</div>' +
-            '</div>' +
+                '<div class="dashboard-hero-toolbar">' +
+                    '<div class="kpi-toggle-group" id="globalKpiToggle">' +
+                        '<button class="kpi-toggle-btn' + monthlyActive + '" data-period="monthly" type="button">Aylık</button>' +
+                        '<button class="kpi-toggle-btn' + dailyActive + '" data-period="daily" type="button">Günlük</button>' +
+                    '</div>' +
+                '</div>' +
+            '</header>' +
             '<div class="kpi-grid">' +
                 self.buildKpiCard('ciro', 'CİRO', src.ciro, src.ciroChange, initialLabel) +
                 self.buildKpiCard('gider', 'GİDER', src.gider, src.giderChange, initialLabel) +

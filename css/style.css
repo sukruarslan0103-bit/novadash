@@ -359,14 +359,107 @@ body {
    KPI CARDS — Large, bold, premium
    ======================== */
 
-/* V1.4: Tek global KPI period selector. Per-card toggle'lar kaldirildi.
-   Mevcut .kpi-toggle-group + .kpi-toggle-btn stylelarini yeniden kullanir;
-   sadece konteyner pozisyonlama eklendi. */
+/* V1.4: Tek global KPI period selector wrapper.
+   R1: Toolbar artik hero'nun sag tarafinda yasiyor (.dashboard-hero-toolbar).
+   Bu rule legacy uyumluluk icin korunuyor — boska olabilir. */
 .kpi-toolbar {
     display: flex;
     justify-content: flex-end;
     align-items: center;
     margin-bottom: 14px;
+}
+
+/* ==========================================================================
+   R1: WELCOME HERO + AMBIENT BACKGROUND
+   ==========================================================================
+   Dashboard'a "urun konusuyor" hissi katar. Sol: greeting + subtitle.
+   Sag: V1.4 global KPI period toggle (yer tasimasi, mantik degisim YOK).
+   ========================================================================== */
+.dashboard-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+}
+
+.dashboard-hero-text {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.dashboard-hero-title {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0 0 6px 0;
+}
+
+.dashboard-hero-title span {
+    display: inline-block;
+    margin-left: 4px;
+    /* Emoji baseline align — Inter ile karisik yer almasin */
+    transform: translateY(-1px);
+}
+
+.dashboard-hero-subtitle {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.dashboard-hero-toolbar {
+    flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+    .dashboard-hero {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
+    }
+    .dashboard-hero-title {
+        font-size: 22px;
+    }
+}
+
+/* ==========================================================================
+   R1: AMBIENT BACKGROUND
+   ==========================================================================
+   3 katmanli ultra-low-opacity radial gradient. Mockup energy'sinin %35
+   asagisinda — "var ama dikkat cekmez" kalibrasyonu.
+   - Sag ust: emerald (brand whisper)
+   - Sol alt: cyan (cool counter)
+   - Sag alt: coral (warmth accent)
+   pointer-events:none + isolation:isolate ile body content'i etkilemez.
+   Mobile'da gerek yok — opacity yarilanir.
+   ========================================================================== */
+body {
+    isolation: isolate;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+        radial-gradient(800px circle at 100% 0%, rgba(16, 185, 129, 0.05), transparent 60%),
+        radial-gradient(700px circle at 0% 100%, rgba(6, 182, 212, 0.03), transparent 55%),
+        radial-gradient(600px circle at 90% 90%, rgba(244, 63, 94, 0.02), transparent 50%);
+}
+
+@media (max-width: 760px) {
+    body::before {
+        opacity: 0.5;
+    }
 }
 
 .kpi-grid {

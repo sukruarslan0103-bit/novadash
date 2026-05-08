@@ -320,7 +320,7 @@ window.DashboardView = {
 
         var weekly = data.weeklySales || [];
 
-        // Same-data guard: aynı dataset → recreate ETME
+        // Same-data guard: ayni dataset → recreate ETME
         var sig = JSON.stringify(weekly.map(function (s) { return [s.day, s.amount]; }));
         if (window.STATE.charts.salesChart && this._lastSalesSig === sig) {
             return;
@@ -329,33 +329,130 @@ window.DashboardView = {
 
         window.destroyChart('salesChart');
 
+        var values = weekly.map(function (s) { return Number(s.amount) || 0; });
+        var nonZero = values.filter(function (v) { return v > 0; });
+        var avg = nonZero.length
+            ? nonZero.reduce(function (a, b) { return a + b; }, 0) / nonZero.length
+            : 0;
+
+        // V1.2: Static bar gradient — top a tik dogun, bottom a tik acik.
+        // Canvas gradient sadece chartArea hesaplandiktan sonra olusur;
+        // ilk render'da chartArea yoksa fallback solid renk.
+        function barGradient(context) {
+            var chart = context.chart;
+            var area = chart.chartArea;
+            if (!area) return 'rgba(52, 199, 89, 0.85)';
+            var g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+            g.addColorStop(0, 'rgba(52, 199, 89, 0.95)');
+            g.addColorStop(1, 'rgba(52, 199, 89, 0.65)');
+            return g;
+        }
+
+        // V1.2: Average line plugin — dashed neutral reference,
+        // dominant degil, sadece "iyi gun mu kotu gun mu" anchor'i.
+        var avgLinePlugin = {
+            id: 'avgLine',
+            afterDatasetsDraw: function (chart) {
+                if (!avg || avg <= 0) return;
+                var area = chart.chartArea;
+                var yScale = chart.scales.y;
+                if (!area || !yScale) return;
+                var y = yScale.getPixelForValue(avg);
+                if (y < area.top || y > area.bottom) return;
+
+                var c = chart.ctx;
+                c.save();
+                c.strokeStyle = 'rgba(15, 23, 42, 0.22)';
+                c.setLineDash([4, 4]);
+                c.lineWidth = 1;
+                c.beginPath();
+                c.moveTo(area.left, y);
+                c.lineTo(area.right, y);
+                c.stroke();
+                c.setLineDash([]);
+
+                // Sag uca kucuk "Ort." etiketi
+                c.font = '600 10px Inter, system-ui, sans-serif';
+                c.fillStyle = 'rgba(15, 23, 42, 0.45)';
+                c.textAlign = 'right';
+                c.textBaseline = 'bottom';
+                c.fillText('Ort. ' + Math.round(avg).toLocaleString('tr-TR'), area.right - 4, y - 3);
+                c.restore();
+            }
+        };
+
         window.STATE.charts.salesChart = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: weekly.map(function (s) { return s.day; }),
                 datasets: [{
                     label: 'Ciro',
-                    data: weekly.map(function (s) { return s.amount; }),
-                    backgroundColor: 'rgba(52, 199, 89, 0.85)',
+                    data: values,
+                    backgroundColor: barGradient,
+                    hoverBackgroundColor: barGradient,
                     borderRadius: 8,
-                    borderSkipped: false
+                    borderSkipped: false,
+                    maxBarThickness: 56
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: {
+                    duration: 600,
+                    easing: 'easeOutQuart'
+                },
                 plugins: {
-                    legend: { display: false }
+                    legend: { display: false },
+                    // V1.2: Dark premium tooltip
+                    tooltip: {
+                        enabled: true,
+                        backgroundColor: '#0F172A',
+                        titleColor: '#F8FAFC',
+                        bodyColor: '#E2E8F0',
+                        titleFont: { family: 'Inter, system-ui, sans-serif', size: 12, weight: '700' },
+                        bodyFont: { family: 'Inter, system-ui, sans-serif', size: 13, weight: '600' },
+                        padding: { x: 12, y: 10 },
+                        cornerRadius: 8,
+                        displayColors: false,
+                        borderColor: 'rgba(255, 255, 255, 0.06)',
+                        borderWidth: 1,
+                        boxPadding: 4,
+                        callbacks: {
+                            label: function (item) {
+                                return '₺' + (Number(item.parsed.y) || 0).toLocaleString('tr-TR');
+                            }
+                        }
+                    }
                 },
                 scales: {
                     y: {
                         beginAtZero: true,
+                        border: { display: false },
+                        grid: {
+                            color: 'rgba(15, 23, 42, 0.05)',
+                            drawTicks: false
+                        },
                         ticks: {
-                            callback: function (val) { return '₺' + val.toLocaleString('tr-TR'); }
+                            callback: function (val) { return '₺' + val.toLocaleString('tr-TR'); },
+                            font: { family: 'Inter, system-ui, sans-serif', size: 11, weight: '500' },
+                            color: '#94A3B8',
+                            padding: 8
+                        }
+                    },
+                    x: {
+                        // V1.2: Visible baseline → bos gunler "kirik chart" hissi vermiyor.
+                        border: { color: 'rgba(15, 23, 42, 0.10)', width: 1 },
+                        grid: { display: false },
+                        ticks: {
+                            font: { family: 'Inter, system-ui, sans-serif', size: 11, weight: '600' },
+                            color: '#64748B',
+                            padding: 6
                         }
                     }
                 }
-            }
+            },
+            plugins: [avgLinePlugin]
         });
     },
 

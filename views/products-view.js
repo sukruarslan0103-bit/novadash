@@ -335,8 +335,37 @@ window.ProductsView = {
 
             <!-- =========================================
                  RECIPE EDITOR MODAL — PREMIUM (DRAFT-BASED)
-                 Sticky header (toplam) + sticky footer (Iptal/Kaydet)
+                 Two-column command palette layout
+                 Sol: mevcut reçete · Sağ: arama + ekleme motoru
                  ========================================= -->
+            <style>
+                .recipe-modal-shell { width:100%; max-width:1040px; height:auto; max-height:calc(100dvh - 32px); background:#fff; border-radius:20px; box-shadow:0 30px 80px rgba(15,23,42,0.30), 0 10px 30px rgba(15,23,42,0.12); border:1px solid #e2e8f0; overflow:hidden; display:flex; flex-direction:column; }
+                .recipe-modal-body { display:grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap:0; flex:1; overflow:hidden; }
+                .recipe-pane { padding:20px 22px; overflow-y:auto; min-height:0; }
+                .recipe-pane-left { border-right:1px solid #e2e8f0; background:#fafafa; }
+                .recipe-pane-right { background:#ffffff; display:flex; flex-direction:column; }
+                .recipe-section-label { font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:12px; }
+                .recipe-search-input { width:100%; padding:16px 16px 16px 46px; border:1.5px solid #e2e8f0; border-radius:14px; font-size:15px; font-weight:600; color:#0f172a; background:#fff; box-sizing:border-box; font-family:inherit; outline:none; transition:border-color .15s, box-shadow .15s, background .15s; }
+                .recipe-search-input:focus { border-color:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,0.12); background:#fff; }
+                .recipe-result-panel { margin-top:12px; border:1px solid #e2e8f0; border-radius:14px; background:#fff; max-height:340px; overflow-y:auto; flex:1; min-height:200px; }
+                .recipe-result-item { padding:12px 16px; cursor:pointer; border-bottom:1px solid #f1f5f9; transition:background 0.12s, border-color 0.12s; border-left:3px solid transparent; }
+                .recipe-result-item:last-child { border-bottom:none; }
+                .recipe-result-item:hover { background:#f0fdf4; }
+                .recipe-result-item.is-selected { background:#ecfdf5; border-left-color:#16a34a; }
+                .recipe-chip { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; background:#dcfce7; border:1px solid #86efac; color:#15803d; font-size:13px; font-weight:700; max-width:100%; }
+                .recipe-chip-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px; }
+                .recipe-qty-input { width:100%; padding:14px 16px; border:1.5px solid #e2e8f0; border-radius:12px; font-size:16px; font-weight:700; color:#0f172a; background:#fff; box-sizing:border-box; font-family:inherit; text-align:left; outline:none; transition:border-color .15s, box-shadow .15s; }
+                .recipe-qty-input:focus { border-color:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,0.12); }
+                .recipe-add-cta { width:100%; padding:14px 20px; font-size:14.5px; font-weight:700; letter-spacing:0.01em; border:none; border-radius:12px; background:#0f172a; color:#fff; cursor:pointer; transition:background .15s, transform .08s, opacity .15s; }
+                .recipe-add-cta:hover:not(:disabled) { background:#1e293b; }
+                .recipe-add-cta:active:not(:disabled) { transform:translateY(1px); }
+                .recipe-add-cta:disabled { opacity:0.45; cursor:not-allowed; }
+                @media (max-width: 760px) {
+                    .recipe-modal-body { grid-template-columns: 1fr; }
+                    .recipe-pane-left { border-right:none; border-bottom:1px solid #e2e8f0; max-height:40dvh; }
+                    .recipe-modal-shell { max-height:calc(100dvh - 16px); }
+                }
+            </style>
             <div
                 id="productsRecipeOverlay"
                 onclick="window.ProductsView.handleRecipeOverlayClick(event)"
@@ -350,90 +379,85 @@ window.ProductsView = {
                     z-index:9999;
                     align-items:center;
                     justify-content:center;
-                    padding:24px;
+                    padding:16px;
                 "
             >
-                <div
-                    onclick="event.stopPropagation()"
-                    style="
-                        width:100%;
-                        max-width:880px;
-                        height:auto;
-                        max-height:calc(100vh - 48px);
-                        background:#ffffff;
-                        border-radius:20px;
-                        box-shadow:0 30px 80px rgba(15,23,42,0.30), 0 10px 30px rgba(15,23,42,0.12);
-                        border:1px solid #e2e8f0;
-                        overflow:hidden;
-                        display:flex;
-                        flex-direction:column;
-                    "
-                >
-                    <!-- HEADER: ürün adı + kapat -->
-                    <div style="padding:22px 26px 18px 26px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px; background:#ffffff;">
+                <div onclick="event.stopPropagation()" class="recipe-modal-shell">
+                    <!-- HEADER -->
+                    <div style="padding:18px 24px 14px 24px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:16px; background:#ffffff;">
                         <div style="min-width:0; flex:1;">
-                            <div style="font-size:11px; font-weight:700; color:#94a3b8; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:6px;">Reçete Düzenle</div>
-                            <div id="productsRecipeSubtitle" style="font-size:20px; font-weight:800; color:#0f172a; letter-spacing:-0.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+                            <div style="font-size:10.5px; font-weight:700; color:#94a3b8; letter-spacing:0.10em; text-transform:uppercase; margin-bottom:4px;">Reçete</div>
+                            <div id="productsRecipeSubtitle" style="font-size:19px; font-weight:800; color:#0f172a; letter-spacing:-0.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
                         </div>
-                        <button class="btn btn-secondary" type="button" onclick="window.ProductsView.cancelRecipe()" title="Kapat" style="padding:8px 12px; font-size:13px; flex-shrink:0;">✕</button>
-                    </div>
-
-                    <!-- STICKY TOTAL CARD -->
-                    <div style="padding:18px 26px; border-bottom:1px solid #e2e8f0; background:linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                            <div>
-                                <div style="font-size:11px; font-weight:700; color:#15803d; letter-spacing:0.08em; text-transform:uppercase;">Toplam Maliyet</div>
-                                <div id="productsRecipeTotalCost" style="margin-top:4px; font-size:28px; font-weight:800; color:#15803d; letter-spacing:-0.02em;">₺0</div>
+                        <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+                            <div style="text-align:right;">
+                                <div style="font-size:10.5px; font-weight:700; color:#94a3b8; letter-spacing:0.10em; text-transform:uppercase;">Toplam</div>
+                                <div id="productsRecipeTotalCost" style="font-size:20px; font-weight:800; color:#15803d; letter-spacing:-0.02em; line-height:1.1;">₺0</div>
                             </div>
-                            <div id="productsRecipeDirtyBadge" style="display:none; padding:6px 12px; border-radius:999px; background:#fef3c7; border:1px solid #fbbf24; color:#92400e; font-size:11px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">● Kaydedilmemiş</div>
+                            <div id="productsRecipeDirtyBadge" style="display:none; padding:5px 10px; border-radius:999px; background:#fef3c7; border:1px solid #fbbf24; color:#92400e; font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;">● Kaydedilmemiş</div>
+                            <button class="btn btn-secondary" type="button" onclick="window.ProductsView.cancelRecipe()" title="Kapat" style="padding:8px 12px; font-size:13px;">✕</button>
                         </div>
                     </div>
 
                     <!-- ERROR -->
-                    <div id="productsRecipeError" style="margin:12px 26px 0 26px; padding:10px 14px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600; display:none;"></div>
+                    <div id="productsRecipeError" style="margin:12px 24px 0 24px; padding:10px 14px; border-radius:10px; background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; font-size:13px; font-weight:600; display:none;"></div>
 
-                    <!-- BODY (scrollable) -->
-                    <div style="padding:18px 26px 8px 26px; overflow-y:auto; flex:1;">
-                        <!-- LIST -->
-                        <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:10px;">Hammaddeler</div>
-                        <div id="productsRecipeList" style="display:flex; flex-direction:column; gap:8px;">
-                            <div style="padding:20px; text-align:center; color:#94a3b8; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px;">Yükleniyor...</div>
+                    <!-- BODY: 2 columns -->
+                    <div class="recipe-modal-body">
+                        <!-- LEFT: mevcut reçete -->
+                        <div class="recipe-pane recipe-pane-left">
+                            <div class="recipe-section-label">Reçete · Hammaddeler</div>
+                            <div id="productsRecipeList" style="display:flex; flex-direction:column; gap:8px;">
+                                <div style="padding:20px; text-align:center; color:#94a3b8; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px;">Yükleniyor...</div>
+                            </div>
                         </div>
 
-                        <!-- ADD ROW -->
-                        <div style="margin-top:22px; padding:18px 20px; border:1.5px solid #e2e8f0; border-radius:16px; background:#f8fafc;">
-                            <div style="font-size:12px; font-weight:800; color:#0f172a; letter-spacing:0.04em; text-transform:uppercase; margin-bottom:14px;">+ Hammadde Ekle</div>
-                            <div style="display:grid; grid-template-columns: 2.4fr 1fr auto; gap:12px; align-items:end;">
-                                <div class="form-group" style="margin-bottom:0; position:relative;">
-                                    <label class="form-label" style="font-size:12px; color:#475569; font-weight:600;">Hammadde Ara</label>
-                                    <div style="position:relative;">
-                                        <svg style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                                        <input type="text" id="productsRecipeSearch" placeholder="Hammadde adı yazın..." autocomplete="off"
-                                            style="width:100%;padding:14px 14px 14px 40px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:14.5px;font-weight:600;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;outline:none;transition:border-color .15s, box-shadow .15s;"
-                                            onfocus="this.style.borderColor='#16a34a';this.style.boxShadow='0 0 0 4px rgba(22,163,74,0.12)';window.ProductsView.recipeShowDropdown(true)"
-                                            onblur="this.style.borderColor='#e2e8f0';this.style.boxShadow='none';"
-                                            oninput="window.ProductsView.recipeHandleSearch(this.value)"
-                                            onkeydown="window.ProductsView.recipeSearchKey(event)">
-                                    </div>
-                                    <input type="hidden" id="productsRecipeAddMaterial" value="">
-                                    <div id="productsRecipeDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #e2e8f0; border-radius:14px; box-shadow:0 18px 50px rgba(15,23,42,0.20); max-height:380px; overflow-y:auto; z-index:40; margin-top:8px;"></div>
-                                </div>
-                                <div class="form-group" style="margin-bottom:0;">
-                                    <label class="form-label" style="font-size:12px; color:#475569; font-weight:600;">Miktar</label>
-                                    <input type="number" id="productsRecipeAddQty" placeholder="0" step="0.0001" min="0"
-                                        style="width:100%;padding:14px;border:1.5px solid #e2e8f0;border-radius:12px;font-size:14.5px;font-weight:600;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;text-align:right;outline:none;"
-                                        onkeydown="if(event.key==='Enter'){window.ProductsView.addRecipeLine();}">
-                                </div>
-                                <div>
-                                    <button class="btn btn-primary" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()" style="padding:14px 20px;font-size:14px;font-weight:700;">+ Ekle</button>
+                        <!-- RIGHT: arama + ekleme motoru -->
+                        <div class="recipe-pane recipe-pane-right">
+                            <div class="recipe-section-label">Hammadde Ekle</div>
+
+                            <!-- search -->
+                            <div style="position:relative;">
+                                <svg style="position:absolute;left:16px;top:50%;transform:translateY(-50%);color:#94a3b8;pointer-events:none;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" id="productsRecipeSearch" class="recipe-search-input" placeholder="Hammadde ara..." autocomplete="off"
+                                    onfocus="window.ProductsView.recipeShowDropdown(true)"
+                                    oninput="window.ProductsView.recipeHandleSearch(this.value)"
+                                    onkeydown="window.ProductsView.recipeSearchKey(event)">
+                                <input type="hidden" id="productsRecipeAddMaterial" value="">
+                            </div>
+
+                            <!-- result panel (inline, dropdown DEĞİL) -->
+                            <div id="productsRecipeDropdown" class="recipe-result-panel" style="display:block;"></div>
+
+                            <!-- selected chip -->
+                            <div id="productsRecipeSelectedRow" style="display:none; margin-top:14px; padding:12px 14px; border:1px solid #bbf7d0; border-radius:12px; background:#f0fdf4;">
+                                <div style="font-size:11px; font-weight:700; color:#15803d; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:8px;">Seçildi</div>
+                                <div id="productsRecipeSelectedChip" class="recipe-chip">
+                                    <span style="font-size:13px; line-height:1;">✓</span>
+                                    <span class="recipe-chip-name"></span>
+                                    <span style="opacity:0.7; font-weight:600;" data-role="unit"></span>
                                 </div>
                             </div>
-                            <div id="productsRecipeAddHint" style="margin-top:10px; font-size:12.5px; color:#64748b;"></div>
+
+                            <!-- qty + cta -->
+                            <div style="margin-top:14px; display:grid; grid-template-columns: 1fr; gap:10px;">
+                                <div>
+                                    <label style="display:block; font-size:11px; font-weight:700; color:#475569; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:6px;">Miktar</label>
+                                    <div style="position:relative;">
+                                        <input type="number" id="productsRecipeAddQty" class="recipe-qty-input" placeholder="0" step="0.0001" min="0"
+                                            oninput="window.ProductsView._updateRecipeAddCtaState()"
+                                            onkeydown="if(event.key==='Enter'){event.preventDefault();window.ProductsView.addRecipeLine();}">
+                                        <span id="productsRecipeQtyUnit" style="position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:#94a3b8;pointer-events:none;"></span>
+                                    </div>
+                                    <div id="productsRecipeAddHint" style="margin-top:8px; font-size:12.5px; color:#64748b; min-height:16px;"></div>
+                                </div>
+                                <button class="recipe-add-cta" type="button" id="productsRecipeAddBtn" onclick="window.ProductsView.addRecipeLine()">Reçeteye Ekle</button>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- STICKY FOOTER: Iptal / Kaydet -->
-                    <div style="padding:16px 26px; border-top:1px solid #e2e8f0; background:#ffffff; display:flex; justify-content:flex-end; gap:10px;">
+                    <!-- FOOTER -->
+                    <div style="padding:14px 24px; border-top:1px solid #e2e8f0; background:#ffffff; display:flex; justify-content:flex-end; gap:10px;">
                         <button class="btn btn-secondary" type="button" id="productsRecipeCancelBtn" onclick="window.ProductsView.cancelRecipe()" style="padding:11px 22px; font-weight:600;">İptal</button>
                         <button class="btn btn-primary" type="button" id="productsRecipeSaveBtn" onclick="window.ProductsView.saveRecipe()" style="padding:11px 28px; font-weight:700; min-width:120px;">Kaydet</button>
                     </div>
@@ -1230,6 +1254,17 @@ window.ProductsView = {
         if (subtitle) subtitle.textContent = this.recipeState.productName;
 
         this.setRecipeError('');
+        // Reset add row state (yeniden acilista chip/qty/search temiz olsun)
+        var searchEl = document.getElementById('productsRecipeSearch');
+        var qtyEl    = document.getElementById('productsRecipeAddQty');
+        var hiddenEl = document.getElementById('productsRecipeAddMaterial');
+        var hintEl   = document.getElementById('productsRecipeAddHint');
+        if (searchEl) searchEl.value = '';
+        if (qtyEl) { qtyEl.value = ''; qtyEl.placeholder = '0'; }
+        if (hiddenEl) hiddenEl.value = '';
+        if (hintEl) hintEl.innerHTML = '';
+        this._renderRecipeSelectedChip(null);
+
         this.renderRecipeList();
         this.renderRawMaterialSelect();
         this.renderRecipeFooter();
@@ -1380,7 +1415,14 @@ window.ProductsView = {
         });
 
         if (visible.length === 0) {
-            list.innerHTML = '<div style="padding:24px; text-align:center; color:#64748b; font-size:13px; border:1px dashed #e2e8f0; border-radius:12px; background:#f8fafc;">Bu ürün için henüz reçete yok. Aşağıdan hammadde ekleyebilirsin.</div>';
+            list.innerHTML =
+                '<div style="padding:28px 20px; text-align:center; color:#64748b; font-size:13px; line-height:1.55; border:1px dashed #e2e8f0; border-radius:14px; background:#ffffff;">' +
+                    '<div style="width:36px; height:36px; margin:0 auto 12px; border-radius:10px; background:#f1f5f9; display:flex; align-items:center; justify-content:center; color:#94a3b8;">' +
+                        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><path d="M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg>' +
+                    '</div>' +
+                    '<div style="font-weight:700; color:#0f172a; margin-bottom:4px;">Henüz reçete eklenmedi</div>' +
+                    '<div style="color:#94a3b8; font-size:12.5px;">Sağ taraftan hammadde arayıp ekleyebilirsin.</div>' +
+                '</div>';
             if (totalEl) totalEl.textContent = this.formatMoney(0);
             return;
         }
@@ -1483,14 +1525,20 @@ window.ProductsView = {
         var materials = this.recipeState.rawMaterials || [];
 
         if (this.recipeState.loading) {
-            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Yükleniyor...</div>';
+            dropdown.innerHTML = '<div style="padding:24px 16px; text-align:center; color:#94a3b8; font-size:13px;">Yükleniyor...</div>';
             if (hint) hint.textContent = '';
+            this._updateRecipeAddCtaState();
             return;
         }
 
         if (materials.length === 0) {
-            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Hammadde yok.</div>';
-            if (hint) hint.textContent = 'Önce "HAMMADDELER" sekmesinden hammadde oluşturmalısın.';
+            dropdown.innerHTML =
+                '<div style="padding:28px 20px; text-align:center;">' +
+                    '<div style="font-weight:700; color:#0f172a; font-size:13px; margin-bottom:4px;">Hammadde tanımlı değil</div>' +
+                    '<div style="color:#94a3b8; font-size:12.5px;">Önce "Hammaddeler" sekmesinden ekle.</div>' +
+                '</div>';
+            if (hint) hint.textContent = '';
+            this._updateRecipeAddCtaState();
             return;
         }
 
@@ -1519,56 +1567,73 @@ window.ProductsView = {
         }
 
         if (!available.length) {
-            dropdown.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:13px;">Sonuç bulunamadı.</div>';
+            dropdown.innerHTML =
+                '<div style="padding:28px 20px; text-align:center;">' +
+                    '<div style="font-weight:700; color:#0f172a; font-size:13px; margin-bottom:4px;">Sonuç bulunamadı</div>' +
+                    '<div style="color:#94a3b8; font-size:12.5px;">Farklı bir ad dene.</div>' +
+                '</div>';
+            this._updateRecipeAddCtaState();
             return;
         }
 
         var selectedId = hidden ? hidden.value : '';
 
-        dropdown.innerHTML = available.map(function (m, idx) {
+        dropdown.innerHTML = available.map(function (m) {
             var id = self.escapeHtml(m.id);
             var name = self.escapeHtml((m.name || '').toUpperCase());
-            // Recipe contract: quantity base_unit cinsinden saklanir.
-            // Dropdown'da kullaniciya base_unit + base_unit basina maliyet gosterilir.
             var baseUnit = self.escapeHtml(m.base_unit || m.unit || '-');
             var costNum  = Number(m.cost) || 0;
             var costText = self.formatMoney(costNum) + ' / ' + baseUnit;
             var isSel = String(m.id) === String(selectedId);
-            var bg = isSel ? '#ecfdf5' : '#ffffff';
-            return '<div data-rmid="' + id + '" onclick="window.ProductsView.recipeSelectMaterial(\'' + id + '\')" ' +
-                'style="padding:14px 16px; cursor:pointer; border-bottom:1px solid #f1f5f9; background:' + bg + '; transition:background 0.1s;" ' +
-                'onmouseover="this.style.background=\'#f0fdf4\'" onmouseout="this.style.background=\'' + bg + '\'">' +
-                '<div style="font-weight:800; color:#0f172a; font-size:14px; display:flex; align-items:center; gap:8px;">' +
-                    '<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + name + '</span>' +
-                    (isSel ? '<span style="color:#16a34a;font-size:13px;">✓</span>' : '') +
-                '</div>' +
-                '<div style="font-size:12px; color:#64748b; margin-top:4px; display:flex; gap:8px; align-items:center;">' +
-                    '<span style="font-weight:700; color:#0f172a;">' + baseUnit + '</span>' +
-                    '<span style="color:#cbd5e1;">·</span>' +
-                    '<span style="font-weight:700; color:#15803d;">' + costText + '</span>' +
+            var clsTail = isSel ? ' is-selected' : '';
+
+            return '<div class="recipe-result-item' + clsTail + '" data-rmid="' + id + '" onclick="window.ProductsView.recipeSelectMaterial(\'' + id + '\')">' +
+                '<div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">' +
+                    '<div style="min-width:0; flex:1;">' +
+                        '<div style="font-weight:700; color:#0f172a; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + name + '</div>' +
+                        '<div style="font-size:11.5px; color:#94a3b8; margin-top:2px; font-weight:600;">' + baseUnit + '</div>' +
+                    '</div>' +
+                    '<div style="flex-shrink:0; font-size:12px; font-weight:700; color:#15803d; white-space:nowrap;">' + costText + '</div>' +
+                    (isSel ? '<span style="color:#16a34a;font-size:14px;font-weight:800;flex-shrink:0;">✓</span>' : '') +
                 '</div>' +
             '</div>';
         }).join('');
+
+        this._updateRecipeAddCtaState();
+    },
+
+    _updateRecipeAddCtaState: function () {
+        var btn = document.getElementById('productsRecipeAddBtn');
+        var hidden = document.getElementById('productsRecipeAddMaterial');
+        var qty = document.getElementById('productsRecipeAddQty');
+        if (!btn) return;
+
+        var hasMaterial = !!(hidden && hidden.value);
+        var qtyNum = qty ? Number(qty.value) : 0;
+        var hasQty = Number.isFinite(qtyNum) && qtyNum > 0;
+        btn.disabled = !(hasMaterial && hasQty);
     },
 
     recipeHandleSearch: function (value) {
-        this.renderRawMaterialSelect();
-        this.recipeShowDropdown(true);
-
+        // Kullanici aramaya yazmaya basladi -> aktif chip'i iptal et
+        // (yeni hammadde tarama sinyali)
         var hidden = document.getElementById('productsRecipeAddMaterial');
-        if (hidden && hidden.value) {
-            var m = (this.recipeState.rawMaterials || []).find(function (x) { return String(x.id) === String(hidden.value); });
-            if (m) {
-                var expected = 'HM - ' + (m.name || '');
-                if (value !== expected) hidden.value = '';
-            }
+        if (hidden && hidden.value && (value || '').length > 0) {
+            hidden.value = '';
+            this._renderRecipeSelectedChip(null);
         }
+        this.renderRawMaterialSelect();
     },
 
+    // Inline result panel artik her zaman gorunur — bu metod no-op'a yakin.
+    // Eski cagri yerlerini kirmamak icin korunuyor.
     recipeShowDropdown: function (show) {
         var dd = document.getElementById('productsRecipeDropdown');
         if (!dd) return;
-        dd.style.display = show ? 'block' : 'none';
+        // Yeni layout: panel statik gorunur. show=false geldiginde gizleme,
+        // sadece scroll'u basa al.
+        dd.style.display = 'block';
+        if (show === false) { try { dd.scrollTop = 0; } catch (e) {} }
     },
 
     recipeSelectMaterial: function (id) {
@@ -1576,24 +1641,51 @@ window.ProductsView = {
         if (!m) return;
 
         var hidden = document.getElementById('productsRecipeAddMaterial');
-        var search = document.getElementById('productsRecipeSearch');
         var qty    = document.getElementById('productsRecipeAddQty');
         var hint   = document.getElementById('productsRecipeAddHint');
 
         if (hidden) hidden.value = m.id;
-        if (search) search.value = (m.name || '').toUpperCase();
 
-        // Birim hint: kullanıcıya base_unit'i net göster
         var baseUnit = m.base_unit || m.unit || '';
-        if (hint && baseUnit) {
-            hint.innerHTML = 'Miktarı <b style="color:#0f172a;">' + this.escapeHtml(baseUnit) + '</b> cinsinden girin.';
+        if (hint) {
+            hint.innerHTML = baseUnit
+                ? 'Miktarı <b style="color:#0f172a;">' + this.escapeHtml(baseUnit) + '</b> cinsinden girin.'
+                : '';
         }
-        if (qty && baseUnit) {
-            qty.placeholder = 'Örn: 100 ' + baseUnit;
+        if (qty) {
+            qty.placeholder = '0';
         }
 
-        this.recipeShowDropdown(false);
-        if (qty) qty.focus();
+        // Selected chip + result list highlight
+        this._renderRecipeSelectedChip(m);
+        this.renderRawMaterialSelect();
+
+        if (qty) {
+            try { qty.focus(); qty.select && qty.select(); } catch (e) {}
+        }
+    },
+
+    _renderRecipeSelectedChip: function (material) {
+        var row = document.getElementById('productsRecipeSelectedRow');
+        var chip = document.getElementById('productsRecipeSelectedChip');
+        var qtyUnit = document.getElementById('productsRecipeQtyUnit');
+        if (!row || !chip) return;
+
+        if (!material) {
+            row.style.display = 'none';
+            if (qtyUnit) qtyUnit.textContent = '';
+            return;
+        }
+
+        var nameEl = chip.querySelector('.recipe-chip-name');
+        var unitEl = chip.querySelector('[data-role="unit"]');
+        var unit = material.base_unit || material.unit || '';
+
+        if (nameEl) nameEl.textContent = (material.name || '').toUpperCase();
+        if (unitEl) unitEl.textContent = unit ? '· ' + unit : '';
+        if (qtyUnit) qtyUnit.textContent = unit || '';
+
+        row.style.display = 'block';
     },
 
     recipeSearchKey: function (e) {
@@ -1686,13 +1778,20 @@ window.ProductsView = {
 
         // Form temizle
         qtyEl.value = '';
+        qtyEl.placeholder = '0';
         selectEl.value = '';
         var searchInput = document.getElementById('productsRecipeSearch');
         if (searchInput) searchInput.value = '';
+        var hintEl = document.getElementById('productsRecipeAddHint');
+        if (hintEl) hintEl.innerHTML = '';
+        this._renderRecipeSelectedChip(null);
         this.recipeShowDropdown(false);
 
         this.renderRecipeList();
         this.renderRawMaterialSelect();
+
+        // Seri ekleme: search'e tekrar focus
+        if (searchInput) { try { searchInput.focus(); } catch (e) {} }
     },
 
     updateRecipeLineQuantity: function (tempId, value) {

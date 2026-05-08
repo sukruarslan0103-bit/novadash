@@ -1019,7 +1019,15 @@ window.SalesView = {
     async deleteSale(saleId) {
         if (!saleId) return;
 
-        const confirmed = confirm('Bu satış silinsin mi?');
+        const sale = this.salesData.find(s => s.id === saleId);
+        const itemCount = this.getProductSalesBySaleId(saleId).length;
+        const summary = {
+            date: sale ? sale.date : null,
+            total: sale ? Number(sale.total) || 0 : 0,
+            itemCount: itemCount
+        };
+
+        const confirmed = await this._confirmDeleteSale(summary);
         if (!confirmed) return;
 
         try {
@@ -1831,5 +1839,142 @@ window.SalesView = {
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    },
+
+    /* ============================================================
+       SATIS SIL — CONFIRMATION MODAL
+       Native confirm() yerine premium modal. Promise<boolean> doner.
+       Enter = sil DEGIL (yanlis silme onleme).
+       ESC / backdrop / Iptal = false. Sadece "Satisi Sil" tiklamasi true.
+       ============================================================ */
+    _confirmDeleteSale(summary) {
+        return new Promise((resolve) => {
+            // Daha onceki bir modal kaldiysa temizle
+            const prev = document.getElementById('salesDeleteOverlay');
+            if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+
+            const dateText = summary && summary.date
+                ? (window.Formatters && window.Formatters.date ? window.Formatters.date(summary.date) : String(summary.date))
+                : '—';
+            const totalText = summary
+                ? (window.Formatters && window.Formatters.currency ? window.Formatters.currency(summary.total || 0) : ('₺' + (summary.total || 0)))
+                : '—';
+            const itemText = summary && summary.itemCount > 0
+                ? (summary.itemCount + ' satır')
+                : 'Detay yok';
+
+            const overlay = document.createElement('div');
+            overlay.id = 'salesDeleteOverlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;transition:opacity 150ms ease;';
+
+            overlay.innerHTML =
+                '<div id="salesDeleteSheet" style="width:100%;max-width:420px;background:#fff;border-radius:18px;box-shadow:0 30px 80px rgba(15,23,42,0.30), 0 10px 30px rgba(15,23,42,0.12);border:1px solid #e2e8f0;overflow:hidden;transform:scale(0.96);opacity:0;transition:transform 150ms ease, opacity 150ms ease;">' +
+                    '<div style="padding:24px 24px 18px 24px; text-align:center;">' +
+                        '<div style="width:48px;height:48px;margin:0 auto 14px;border-radius:14px;background:#fffbeb;border:1px solid #fde68a;display:flex;align-items:center;justify-content:center;color:#d97706;">' +
+                            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+                        '</div>' +
+                        '<div style="font-size:17px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;line-height:1.3;">Bu satış kaydı silinecek</div>' +
+                        '<div style="margin-top:6px;font-size:13.5px;color:#64748b;line-height:1.5;">Devam etmek istediğine emin misin?</div>' +
+                    '</div>' +
+
+                    '<div style="margin:0 20px 14px 20px; padding:14px 16px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;">' +
+                            '<span style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:0.04em;text-transform:uppercase;">Tarih</span>' +
+                            '<span style="font-size:13.5px;font-weight:700;color:#0f172a;">' + this.escapeHtml(dateText) + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid #eef2f7;">' +
+                            '<span style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:0.04em;text-transform:uppercase;">Tutar</span>' +
+                            '<span style="font-size:14px;font-weight:800;color:#0f172a;letter-spacing:-0.01em;">' + this.escapeHtml(totalText) + '</span>' +
+                        '</div>' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-top:1px solid #eef2f7;">' +
+                            '<span style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:0.04em;text-transform:uppercase;">Ürün</span>' +
+                            '<span style="font-size:13.5px;font-weight:700;color:#0f172a;">' + this.escapeHtml(itemText) + '</span>' +
+                        '</div>' +
+                    '</div>' +
+
+                    '<div style="margin:0 20px 18px 20px; padding:10px 14px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; display:flex; align-items:center; gap:10px;">' +
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+                        '<span style="font-size:12.5px;font-weight:600;color:#92400e;line-height:1.4;">Bu işlem geri alınamaz.</span>' +
+                    '</div>' +
+
+                    '<div style="padding:14px 20px;border-top:1px solid #e2e8f0;background:#ffffff;display:flex;gap:10px;">' +
+                        '<button type="button" id="salesDeleteCancelBtn" style="flex:1;padding:12px 18px;border:1px solid #e2e8f0;background:#fff;color:#0f172a;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer;transition:background .12s, border-color .12s;">İptal</button>' +
+                        '<button type="button" id="salesDeleteConfirmBtn" style="flex:1;padding:12px 18px;border:none;background:#dc2626;color:#fff;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer;transition:background .12s, transform .08s;">Satışı Sil</button>' +
+                    '</div>' +
+                '</div>';
+
+            document.body.appendChild(overlay);
+
+            const sheet = overlay.querySelector('#salesDeleteSheet');
+            const cancelBtn = overlay.querySelector('#salesDeleteCancelBtn');
+            const confirmBtn = overlay.querySelector('#salesDeleteConfirmBtn');
+
+            // Hover styles (inline element delegation)
+            cancelBtn.addEventListener('mouseover', () => { cancelBtn.style.background = '#f8fafc'; cancelBtn.style.borderColor = '#cbd5e1'; });
+            cancelBtn.addEventListener('mouseout', () => { cancelBtn.style.background = '#fff'; cancelBtn.style.borderColor = '#e2e8f0'; });
+            confirmBtn.addEventListener('mouseover', () => { confirmBtn.style.background = '#b91c1c'; });
+            confirmBtn.addEventListener('mouseout', () => { confirmBtn.style.background = '#dc2626'; });
+            confirmBtn.addEventListener('mousedown', () => { confirmBtn.style.transform = 'translateY(1px)'; });
+            confirmBtn.addEventListener('mouseup', () => { confirmBtn.style.transform = ''; });
+
+            // Animate in
+            requestAnimationFrame(() => {
+                overlay.style.opacity = '1';
+                if (sheet) {
+                    sheet.style.transform = 'scale(1)';
+                    sheet.style.opacity = '1';
+                }
+            });
+
+            const previouslyFocused = document.activeElement;
+            // Default focus to Cancel — Enter Cancel'e gider, asla Sil'e DEGIL
+            setTimeout(() => { try { cancelBtn.focus(); } catch (e) {} }, 50);
+
+            const cleanup = (result) => {
+                document.removeEventListener('keydown', onKey, true);
+                overlay.style.opacity = '0';
+                if (sheet) {
+                    sheet.style.transform = 'scale(0.96)';
+                    sheet.style.opacity = '0';
+                }
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                    try { if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus(); } catch (e) {}
+                    resolve(result);
+                }, 150);
+            };
+
+            const onKey = (ev) => {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    cleanup(false);
+                } else if (ev.key === 'Enter') {
+                    // KRITIK: Enter sadece Cancel'i tetikler (yanlis silme onleme).
+                    // Confirm butonu odaktayken bile Enter cancel'lar.
+                    if (document.activeElement === confirmBtn) {
+                        ev.preventDefault();
+                    }
+                }
+            };
+
+            document.addEventListener('keydown', onKey, true);
+
+            overlay.addEventListener('click', (ev) => {
+                if (ev.target === overlay) cleanup(false);
+            });
+
+            cancelBtn.addEventListener('click', () => cleanup(false));
+            confirmBtn.addEventListener('click', () => {
+                // Loading state
+                confirmBtn.disabled = true;
+                cancelBtn.disabled = true;
+                confirmBtn.style.cursor = 'wait';
+                confirmBtn.style.opacity = '0.85';
+                confirmBtn.textContent = 'Siliniyor...';
+                cleanup(true);
+            });
+        });
     }
 };

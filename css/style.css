@@ -40,7 +40,10 @@
     --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.06), 0 12px 28px rgba(15, 23, 42, 0.04);
     --shadow-lg: 0 12px 40px rgba(15, 23, 42, 0.08);
 
-    --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    /* Faz 2: Ana font Inter Variable. --font-sans (Faz 1'de tanimli)
+       ile ayni deger; --font legacy alias olarak korunuyor cunku
+       style.css icindeki mevcut kurallar bunu referans veriyor. */
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 /* ========================
@@ -61,6 +64,12 @@ body {
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.5;
+    /* Faz 2: Inter karakter avantajlari aktif.
+       cv11 — single-storey 'a' (SF Pro tarzi)
+       ss01 — alternate stylistic set (terminaller daha temiz)
+       ss03 — open digit apertures (4 / 6 / 9 daha okunabilir)
+       Tabular-nums opt-in selector'larda (Faz 1) zaten aktif. */
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
 
 /* ========================

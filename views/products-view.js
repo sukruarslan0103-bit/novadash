@@ -354,8 +354,12 @@ window.ProductsView = {
                 .recipe-result-item.is-selected { background:#ecfdf5; border-left-color:#16a34a; }
                 .recipe-chip { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px; background:#dcfce7; border:1px solid #86efac; color:#15803d; font-size:13px; font-weight:700; max-width:100%; }
                 .recipe-chip-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:200px; }
-                .recipe-qty-input { width:100%; padding:14px 16px; border:1.5px solid #e2e8f0; border-radius:12px; font-size:16px; font-weight:700; color:#0f172a; background:#fff; box-sizing:border-box; font-family:inherit; text-align:left; outline:none; transition:border-color .15s, box-shadow .15s; }
+                .recipe-qty-wrap { position:relative; }
+                .recipe-qty-input { width:100%; padding:14px 64px 14px 16px; border:1.5px solid #e2e8f0; border-radius:12px; font-size:16px; line-height:1.2; font-weight:700; color:#0f172a; background:#fff; box-sizing:border-box; font-family:inherit; text-align:right; outline:none; transition:border-color .15s, box-shadow .15s; font-variant-numeric:tabular-nums; -moz-appearance:textfield; }
+                .recipe-qty-input::-webkit-outer-spin-button,
+                .recipe-qty-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
                 .recipe-qty-input:focus { border-color:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,0.12); }
+                .recipe-qty-suffix { position:absolute; right:16px; top:50%; transform:translateY(-50%); font-size:13px; font-weight:700; color:#94a3b8; pointer-events:none; line-height:1; letter-spacing:0.02em; opacity:0.85; max-width:48px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
                 .recipe-add-cta { width:100%; padding:14px 20px; font-size:14.5px; font-weight:700; letter-spacing:0.01em; border:none; border-radius:12px; background:#0f172a; color:#fff; cursor:pointer; transition:background .15s, transform .08s, opacity .15s; }
                 .recipe-add-cta:hover:not(:disabled) { background:#1e293b; }
                 .recipe-add-cta:active:not(:disabled) { transform:translateY(1px); }
@@ -443,11 +447,12 @@ window.ProductsView = {
                             <div style="margin-top:14px; display:grid; grid-template-columns: 1fr; gap:10px;">
                                 <div>
                                     <label style="display:block; font-size:11px; font-weight:700; color:#475569; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:6px;">Miktar</label>
-                                    <div style="position:relative;">
+                                    <div class="recipe-qty-wrap">
                                         <input type="number" id="productsRecipeAddQty" class="recipe-qty-input" placeholder="0" step="0.0001" min="0"
+                                            inputmode="decimal"
                                             oninput="window.ProductsView._updateRecipeAddCtaState()"
                                             onkeydown="if(event.key==='Enter'){event.preventDefault();window.ProductsView.addRecipeLine();}">
-                                        <span id="productsRecipeQtyUnit" style="position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:700;color:#94a3b8;pointer-events:none;"></span>
+                                        <span id="productsRecipeQtyUnit" class="recipe-qty-suffix"></span>
                                     </div>
                                     <div id="productsRecipeAddHint" style="margin-top:8px; font-size:12.5px; color:#64748b; min-height:16px;"></div>
                                 </div>

@@ -376,11 +376,14 @@ body {
    Sag: V1.4 global KPI period toggle (yer tasimasi, mantik degisim YOK).
    ========================================================================== */
 .dashboard-hero {
+    /* R4.1: Toggle hero text block'unun dikey ortasinda dengelenir
+       (eskiden flex-end → subtitle baseline'ina yapisikti).
+       margin-bottom 24px → 20px ile KPI grid'e optik yakinlik. */
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     gap: 24px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
     flex-wrap: wrap;
 }
 

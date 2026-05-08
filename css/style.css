@@ -471,6 +471,148 @@ body::before {
     }
 }
 
+/* ==========================================================================
+   R3: KPI CARDS V2 — premium operational objects
+   ==========================================================================
+   "Beyaz container" -> "premium operational object" gecisi.
+   - Semantic color per KPI (CIRO/GIDER/KAR/TREND)
+   - Static liquid wave alt katman (mockup energy %35 asagi)
+   - Icon bubble top-left
+   - Kontrollü hover lift (constant glow YOK)
+   Ambient motion YOK — pulse, breathing, shimmer hicbiri yok.
+   ========================================================================== */
+.kpi-card {
+    position: relative;
+    isolation: isolate; /* ::after wave kart icinde kalsin */
+    overflow: hidden;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.kpi-card-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    height: 100%;
+}
+
+/* V2 .kpi-header — daha spesifik selector (.kpi-card-content nested)
+   ile eski rule'larin justify-content: space-between artikalari neutralize. */
+.kpi-card-content .kpi-header,
+.kpi-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-start;
+    margin-bottom: 0;
+}
+
+.kpi-icon-bubble {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.18s ease;
+}
+
+.kpi-icon-bubble svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2.2;
+}
+
+/* Wave layer — pure CSS, static gradient. Mockup'tan %35 asagi alpha. */
+.kpi-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 45%;
+    pointer-events: none;
+    z-index: 0;
+    border-radius: 0 0 var(--radius) var(--radius);
+    transition: opacity 0.2s ease;
+}
+
+/* Decorative wave arc — soft SVG-style curve as background-image, semantic color.
+   Tek katman dekoratif sparkline illuzyonu. Veri DEGIL. */
+.kpi-card::before {
+    content: '';
+    position: absolute;
+    bottom: 18%;
+    left: -10%;
+    right: -10%;
+    height: 30%;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.22;
+    background-repeat: no-repeat;
+    background-position: center bottom;
+    background-size: 100% 100%;
+}
+
+/* Hover — subtle lift + soft semantic-tinted shadow */
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.kpi-card:hover .kpi-icon-bubble {
+    transform: scale(1.05);
+}
+
+/* CIRO — emerald */
+.kpi-card.kpi-ciro .kpi-icon-bubble { background: var(--kpi-ciro-bg); color: var(--kpi-ciro); }
+.kpi-card.kpi-ciro::after {
+    background:
+        radial-gradient(ellipse 90% 70% at 50% 100%, rgba(16, 185, 129, 0.18), transparent 65%),
+        linear-gradient(180deg, transparent 0%, rgba(16, 185, 129, 0.06) 100%);
+}
+.kpi-card.kpi-ciro::before {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,55 C60,30 120,65 180,40 C240,15 300,55 400,30' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round'/></svg>");
+}
+
+/* GIDER — coral */
+.kpi-card.kpi-gider .kpi-icon-bubble { background: var(--kpi-gider-bg); color: var(--kpi-gider); }
+.kpi-card.kpi-gider::after {
+    background:
+        radial-gradient(ellipse 90% 70% at 50% 100%, rgba(244, 63, 94, 0.16), transparent 65%),
+        linear-gradient(180deg, transparent 0%, rgba(244, 63, 94, 0.05) 100%);
+}
+.kpi-card.kpi-gider::before {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,40 C60,55 120,25 180,50 C240,70 300,35 400,55' fill='none' stroke='%23F43F5E' stroke-width='2.5' stroke-linecap='round'/></svg>");
+}
+
+/* KAR — cyan */
+.kpi-card.kpi-kar .kpi-icon-bubble { background: var(--kpi-kar-bg); color: var(--kpi-kar); }
+.kpi-card.kpi-kar::after {
+    background:
+        radial-gradient(ellipse 90% 70% at 50% 100%, rgba(6, 182, 212, 0.16), transparent 65%),
+        linear-gradient(180deg, transparent 0%, rgba(6, 182, 212, 0.05) 100%);
+}
+.kpi-card.kpi-kar::before {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,50 C80,40 160,30 240,35 C320,40 360,25 400,20' fill='none' stroke='%2306B6D4' stroke-width='2.5' stroke-linecap='round'/></svg>");
+}
+
+/* TREND — lime */
+.kpi-card.kpi-trend .kpi-icon-bubble { background: var(--kpi-trend-bg); color: var(--kpi-trend); }
+.kpi-card.kpi-trend::after {
+    background:
+        radial-gradient(ellipse 90% 70% at 50% 100%, rgba(132, 204, 22, 0.16), transparent 65%),
+        linear-gradient(180deg, transparent 0%, rgba(132, 204, 22, 0.05) 100%);
+}
+.kpi-card.kpi-trend::before {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,60 C80,50 160,55 240,30 C320,10 360,25 400,15' fill='none' stroke='%2384CC16' stroke-width='2.5' stroke-linecap='round'/></svg>");
+}
+
+@media (max-width: 760px) {
+    .kpi-card::after { height: 40%; }
+    .kpi-card::before { bottom: 14%; }
+}
+
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -500,26 +642,12 @@ body::before {
     border-color: rgba(15, 23, 42, 0.08);
 }
 
-/* Üst aksent — daha incelmiş, soft gradient */
-.kpi-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    opacity: 0.85;
-}
-
-.kpi-card:nth-child(1)::before { background: linear-gradient(90deg, var(--primary) 0%, #34d399 100%); }
-.kpi-card:nth-child(2)::before { background: linear-gradient(90deg, var(--red) 0%, #f87171 100%); }
-.kpi-card:nth-child(3)::before { background: linear-gradient(90deg, var(--blue) 0%, #60a5fa 100%); }
-.kpi-card:nth-child(4)::before { background: linear-gradient(90deg, var(--orange) 0%, #fbbf24 100%); }
-
-.kpi-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
-}
+/* R3: V1 ust accent bar + nth-child renk gradient'leri kaldirildi.
+   V2'de semantik renk artik wave layer (alt) + icon bubble (ust) ile
+   ifade ediliyor. Ust accent bar dekoratifti, bilgi tasimiyordu.
+   Eski .kpi-header'in justify-content: space-between'i V2'de gerek yok
+   (toggle V1.4'te kaldirildi); yerine V2 .kpi-card-content .kpi-header
+   override'i kullaniliyor (yukaridaki R3 blogunda). */
 
 .kpi-title {
     font-size: 0.78rem;
@@ -1085,6 +1213,15 @@ body::before {
     --fw-semibold:   600;
     --fw-bold:       700;
     --fw-extrabold:  800;
+
+    /* R3: KPI semantic color architecture.
+       Sadece KPI context'te kullanilir. Brand --primary butonlar/active
+       icin saklı kalir. Mockup energy %35 dial-down icin alpha'lar
+       kontrollu (0.05-0.10 araligi). */
+    --kpi-ciro:     #10B981;  --kpi-ciro-bg:  #ECFDF5;
+    --kpi-gider:    #F43F5E;  --kpi-gider-bg: #FEF1F2;
+    --kpi-kar:      #06B6D4;  --kpi-kar-bg:   #ECFEFF;
+    --kpi-trend:    #84CC16;  --kpi-trend-bg: #F7FEE7;
 }
 
 /* Mobile scale — display boyutlari kuculur, body sabit kalir */

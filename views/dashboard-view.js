@@ -263,18 +263,36 @@ window.DashboardView = {
 
         var arrow = isNew ? '' : (change >= 0 ? '↑ ' : '↓ ');
 
-        // V1.4: KPI karti artik per-card toggle icermez.
-        // Period sayfa-seviye global selector'dan geliyor (kpi-toolbar).
-        return '<div class="kpi-card" id="kpi-' + key + '">' +
-            '<div class="kpi-header">' +
-                '<span class="kpi-title">' + title + '</span>' +
-            '</div>' +
-            '<div class="kpi-value" id="kpi-value-' + key + '">' + displayValue + '</div>' +
-            '<div class="kpi-footer">' +
-                '<span class="kpi-trend ' + trendClass + '" id="kpi-trend-' + key + '">' + arrow + self.formatPercent(change) + '</span>' +
-                '<span class="kpi-trend-label" id="kpi-label-' + key + '">' + label + '</span>' +
+        // R3: KPI Card V2 — semantic color class + icon bubble + content wrapper.
+        // Wave layer pure CSS pseudo-element olarak ::after icinde.
+        // Existing element ID'leri (kpi-value-*, kpi-trend-*, kpi-label-*)
+        // korundu — _updateKpiCard() degisiklik gerektirmez.
+        var iconSvg = self._kpiIconSvg(key);
+        return '<div class="kpi-card kpi-' + key + '" id="kpi-' + key + '">' +
+            '<div class="kpi-card-content">' +
+                '<div class="kpi-header">' +
+                    '<div class="kpi-icon-bubble">' + iconSvg + '</div>' +
+                    '<span class="kpi-title">' + title + '</span>' +
+                '</div>' +
+                '<div class="kpi-value" id="kpi-value-' + key + '">' + displayValue + '</div>' +
+                '<div class="kpi-footer">' +
+                    '<span class="kpi-trend ' + trendClass + '" id="kpi-trend-' + key + '">' + arrow + self.formatPercent(change) + '</span>' +
+                    '<span class="kpi-trend-label" id="kpi-label-' + key + '">' + label + '</span>' +
+                '</div>' +
             '</div>' +
         '</div>';
+    },
+
+    // R3: SVG icons per KPI — Lucide-style stroke icons.
+    // currentColor kullanir → .kpi-icon-bubble color: var(--kpi-{key}) ile renklenir.
+    _kpiIconSvg(key) {
+        var icons = {
+            ciro:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>',
+            gider: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>',
+            kar:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>',
+            trend: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>'
+        };
+        return icons[key] || '';
     },
 
     // V1.4: Tek global toggle binding (eskiden 4 kart × 2 button = 8 binding).

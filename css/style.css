@@ -923,24 +923,40 @@ body::before {
 /* ========================
    ANALYSIS
    ======================== */
-.analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+/* R7: Nabiz Insight Grid — denser intelligence rhythm (gap 18 → 14). */
+.analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
+/* R7: Insight card surface refinement.
+   - bg --bg → --surface-inset (R3 token, body'den hafif koyu — frame hisset)
+   - border --border (subtle definition)
+   - padding 18 → 16 (compact premium)
+   - hover: subtle lift + border emphasis */
 .analysis-item {
     display: flex;
     gap: 14px;
-    padding: 18px;
-    background: var(--bg);
+    padding: 16px;
+    background: var(--surface-inset);
+    border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
+.analysis-item:hover {
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+/* R7: Icon bubble 44 → 36 (KPI/alert ile tutarli),
+   font-size 1.2 → 1.1rem (oranti). */
 .analysis-icon {
-    width: 44px; height: 44px;
-    border-radius: var(--radius-xs);
+    width: 36px; height: 36px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-size: 1.2rem;
+    font-size: 1.1rem;
 }
 
 .analysis-icon.green { background: var(--primary-light); }
@@ -948,8 +964,21 @@ body::before {
 .analysis-icon.orange { background: var(--orange-light); }
 .analysis-icon.red { background: var(--red-light); }
 
-.analysis-content h4 { font-size: 0.95rem; font-weight: 800; margin-bottom: 4px; }
-.analysis-content p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; font-weight: 500; }
+/* R7: Title hierarchy — explicit text-primary, letter-spacing -0.005em
+   (R3.1 typography hierarchy ile uyum). */
+.analysis-content h4 {
+    font-size: 0.93rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.005em;
+    margin-bottom: 4px;
+}
+.analysis-content p {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    font-weight: 500;
+}
 
 /* ========================
    COMING SOON

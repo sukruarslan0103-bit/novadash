@@ -228,18 +228,20 @@ window.DashboardView = {
                 '</div>' +
             '</div>' +
 
+            // R7: Nabiz Intelligence Layer — score header refinement (ring + typography),
+            // subtitle typo fix ("Isletme" → "İşletme"), insight grid CSS refine.
             '<div class="card" style="cursor:pointer;" onclick="window.location.hash=\'#health\'">' +
                 '<div class="card-header">' +
-                    '<div><div class="card-title">Nabız</div><span class="card-subtitle">Isletme performans skoru</span></div>' +
-                    '<div style="display:flex;align-items:center;gap:10px;">' +
-                        '<div style="position:relative;width:44px;height:44px;">' +
-                            '<svg viewBox="0 0 36 36" style="width:44px;height:44px;transform:rotate(-90deg);">' +
-                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#e2e8f0" stroke-width="3"></circle>' +
-                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#059669" stroke-width="3" stroke-dasharray="' + (data.healthScore || 0) + ', 100" stroke-linecap="round" class="health-fill"></circle>' +
+                    '<div><div class="card-title">Nabız</div><span class="card-subtitle">İşletme performans skoru</span></div>' +
+                    '<div style="display:flex;align-items:center;gap:12px;">' +
+                        '<div style="position:relative;width:40px;height:40px;">' +
+                            '<svg viewBox="0 0 36 36" style="width:40px;height:40px;transform:rotate(-90deg);">' +
+                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#CBD5E1" stroke-width="2.5"></circle>' +
+                                '<circle cx="18" cy="18" r="16" fill="none" stroke="#059669" stroke-width="2.5" stroke-dasharray="' + (data.healthScore || 0) + ', 100" stroke-linecap="round" class="health-fill"></circle>' +
                             '</svg>' +
                             '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#0f172a;" class="health-value">' + (data.healthScore || 0) + '</div>' +
                         '</div>' +
-                        '<span style="font-size:22px;font-weight:800;color:#0f172a;">' + (data.healthScore || 0) + '<span style="font-size:13px;color:#94a3b8;font-weight:600;"> / 100</span></span>' +
+                        '<span style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;">' + (data.healthScore || 0) + '<span style="font-size:13px;color:#64748b;font-weight:600;letter-spacing:0;"> / 100</span></span>' +
                     '</div>' +
                 '</div>' +
                 '<div class="analysis-grid">' +

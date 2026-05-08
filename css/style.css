@@ -358,6 +358,17 @@ body {
 /* ========================
    KPI CARDS — Large, bold, premium
    ======================== */
+
+/* V1.4: Tek global KPI period selector. Per-card toggle'lar kaldirildi.
+   Mevcut .kpi-toggle-group + .kpi-toggle-btn stylelarini yeniden kullanir;
+   sadece konteyner pozisyonlama eklendi. */
+.kpi-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);

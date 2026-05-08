@@ -5,7 +5,10 @@
    ============================================================ */
 
 window.DashboardView = {
-    kpiPeriods: { ciro: 'monthly', gider: 'monthly', kar: 'monthly', trend: 'monthly' },
+    // V1.4: Tek global KPI period state (eskiden 4 ayri kpiPeriods).
+    // Period degistirme cachedData'da zaten her ikisi (daily/monthly) bulundugu
+    // icin pure client-side switch — RPC veya ViewCache invalidation gerekmez.
+    kpiPeriod: 'monthly',
     cachedData: null,
     isRendering: false,
     _pendingRefresh: false,
@@ -136,14 +139,27 @@ window.DashboardView = {
 
     renderDashboard(container, data) {
         var self = window.DashboardView;
-        var monthly = data.monthly;
+        // V1.4: Initial render artik global kpiPeriod state'ini onurlandirir.
+        // Sayfa degisip geri donulurse kullanici secimi korunur.
+        var period = (self.kpiPeriod === 'daily') ? 'daily' : 'monthly';
+        var src = (period === 'daily') ? data.daily : data.monthly;
+        var initialLabel = (period === 'daily') ? 'düne göre' : 'geçen aya göre';
+        var monthlyActive = (period === 'monthly') ? ' active' : '';
+        var dailyActive = (period === 'daily') ? ' active' : '';
 
         container.innerHTML =
+            // V1.4: Tek global KPI period selector (eskiden her kartta ayri ayriydi).
+            '<div class="kpi-toolbar">' +
+                '<div class="kpi-toggle-group" id="globalKpiToggle">' +
+                    '<button class="kpi-toggle-btn' + monthlyActive + '" data-period="monthly" type="button">Aylık</button>' +
+                    '<button class="kpi-toggle-btn' + dailyActive + '" data-period="daily" type="button">Günlük</button>' +
+                '</div>' +
+            '</div>' +
             '<div class="kpi-grid">' +
-                self.buildKpiCard('ciro', 'CİRO', monthly.ciro, monthly.ciroChange, 'geçen aya göre') +
-                self.buildKpiCard('gider', 'GİDER', monthly.gider, monthly.giderChange, 'geçen aya göre') +
-                self.buildKpiCard('kar', 'KAR-ZARAR', monthly.kar, monthly.karChange, 'geçen aya göre') +
-                self.buildKpiCard('trend', 'SATIŞ TREND', monthly.trend, monthly.trendChange, 'geçen aya göre', true) +
+                self.buildKpiCard('ciro', 'CİRO', src.ciro, src.ciroChange, initialLabel) +
+                self.buildKpiCard('gider', 'GİDER', src.gider, src.giderChange, initialLabel) +
+                self.buildKpiCard('kar', 'KAR-ZARAR', src.kar, src.karChange, initialLabel) +
+                self.buildKpiCard('trend', 'SATIŞ TREND', src.trend, src.trendChange, initialLabel, true) +
             '</div>' +
 
             '<div class="charts-row">' +
@@ -213,7 +229,7 @@ window.DashboardView = {
                 '</div>' +
             '</div>';
 
-        self.bindKpiToggles();
+        self.bindGlobalKpiToggle();
         self.renderSalesChart(data);
         self.renderExpenseChart(data);
         self.updateHeaderWidgets(data);
@@ -232,13 +248,11 @@ window.DashboardView = {
 
         var arrow = isNew ? '' : (change >= 0 ? '↑ ' : '↓ ');
 
+        // V1.4: KPI karti artik per-card toggle icermez.
+        // Period sayfa-seviye global selector'dan geliyor (kpi-toolbar).
         return '<div class="kpi-card" id="kpi-' + key + '">' +
             '<div class="kpi-header">' +
                 '<span class="kpi-title">' + title + '</span>' +
-                '<div class="kpi-toggle-group">' +
-                    '<button class="kpi-toggle-btn active" data-kpi="' + key + '" data-period="monthly" type="button">Aylık</button>' +
-                    '<button class="kpi-toggle-btn" data-kpi="' + key + '" data-period="daily" type="button">Günlük</button>' +
-                '</div>' +
             '</div>' +
             '<div class="kpi-value" id="kpi-value-' + key + '">' + displayValue + '</div>' +
             '<div class="kpi-footer">' +
@@ -248,41 +262,66 @@ window.DashboardView = {
         '</div>';
     },
 
-    bindKpiToggles() {
+    // V1.4: Tek global toggle binding (eskiden 4 kart × 2 button = 8 binding).
+    bindGlobalKpiToggle() {
         var self = window.DashboardView;
+        var toggle = document.getElementById('globalKpiToggle');
+        if (!toggle) return;
 
-        document.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
+        toggle.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
             self._on(btn, 'click', function () {
-                self.toggleKpi(this.dataset.kpi, this.dataset.period);
+                var p = this.dataset.period;
+                if (p === 'monthly' || p === 'daily') {
+                    self.setKpiPeriod(p);
+                }
             });
         });
     },
 
-    toggleKpi(kpiKey, period) {
+    // V1.4: Global period setter — toggle button state + 4 KPI render sync.
+    // Backend cagrisi YOK, cachedData zaten hem daily hem monthly icerir.
+    setKpiPeriod(period) {
         var self = window.DashboardView;
         if (!self.cachedData) return;
+        if (period !== 'monthly' && period !== 'daily') return;
+        if (self.kpiPeriod === period) return; // no-op
 
-        self.kpiPeriods[kpiKey] = period;
+        self.kpiPeriod = period;
 
+        // Toggle button active state
+        var toggle = document.getElementById('globalKpiToggle');
+        if (toggle) {
+            toggle.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
+                btn.classList.toggle('active', btn.dataset.period === period);
+            });
+        }
+
+        // 4 KPI'yi tek pas senkronla
+        ['ciro', 'gider', 'kar', 'trend'].forEach(function (key) {
+            self._updateKpiCard(key, period);
+        });
+    },
+
+    // V1.4: Tek KPI kartinin DOM'unu gunceller (eski toggleKpi'nin orta cekirdegi).
+    // Artik public surface degil — sadece setKpiPeriod tarafindan cagrilir.
+    _updateKpiCard(kpiKey, period) {
+        var self = window.DashboardView;
         var data = self.cachedData;
-        var source = period === 'daily' ? data.daily : data.monthly;
-        var label = period === 'daily' ? 'düne göre' : 'geçen aya göre';
+        if (!data) return;
 
+        var source = (period === 'daily') ? data.daily : data.monthly;
+        var label = (period === 'daily') ? 'düne göre' : 'geçen aya göre';
         var isPercent = (kpiKey === 'trend');
         var value, change;
 
         if (kpiKey === 'ciro') {
-            value = source.ciro;
-            change = source.ciroChange;
+            value = source.ciro; change = source.ciroChange;
         } else if (kpiKey === 'gider') {
-            value = source.gider;
-            change = source.giderChange;
+            value = source.gider; change = source.giderChange;
         } else if (kpiKey === 'kar') {
-            value = source.kar;
-            change = source.karChange;
+            value = source.kar; change = source.karChange;
         } else if (kpiKey === 'trend') {
-            value = source.trend;
-            change = source.trendChange;
+            value = source.trend; change = source.trendChange;
         }
 
         var displayValue = isPercent
@@ -292,7 +331,6 @@ window.DashboardView = {
         var isNew = (change === null || change === undefined);
         var trendClass = isNew ? 'up' : (change >= 0 ? 'up' : 'down');
         if (kpiKey === 'gider' && !isNew) trendClass = change >= 0 ? 'down' : 'up';
-
         var arrow = isNew ? '' : (change >= 0 ? '↑ ' : '↓ ');
 
         var valueEl = document.getElementById('kpi-value-' + kpiKey);
@@ -305,13 +343,6 @@ window.DashboardView = {
             trendEl.className = 'kpi-trend ' + trendClass;
         }
         if (labelEl) labelEl.textContent = label;
-
-        var card = document.getElementById('kpi-' + kpiKey);
-        if (card) {
-            card.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
-                btn.classList.toggle('active', btn.dataset.period === period);
-            });
-        }
     },
 
     renderSalesChart(data) {

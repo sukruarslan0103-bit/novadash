@@ -597,9 +597,10 @@ window.DashboardView = {
                 c.fillStyle = '#0F172A';
                 c.fillText('₺' + Math.round(total).toLocaleString('tr-TR'), cx, cy - 8);
 
-                // Label — UPPERCASE, kucuk, muted
-                c.font = '700 10px Inter, system-ui, sans-serif';
-                c.fillStyle = '#94A3B8';
+                // Label — UPPERCASE, sakin secondary
+                // R5: 10px → 11px, fillStyle muted → secondary (R3.1 hierarchy ile uyum)
+                c.font = '700 11px Inter, system-ui, sans-serif';
+                c.fillStyle = '#475569';
                 c.fillText('TOPLAM GİDER', cx, cy + 14);
 
                 c.restore();
@@ -615,16 +616,19 @@ window.DashboardView = {
                     backgroundColor: colors,
                     hoverBackgroundColor: colors,
                     borderColor: '#FFFFFF',
-                    borderWidth: 2,
+                    // R5: Sakin segment ayrimi — 2 → 1.5px (less compartmentalized)
+                    borderWidth: 1.5,
                     hoverBorderColor: '#FFFFFF',
-                    hoverBorderWidth: 2,
-                    hoverOffset: 6
+                    hoverBorderWidth: 1.5,
+                    // R5: Snappy → nazik hover offset — 6 → 4px
+                    hoverOffset: 4
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                cutout: '68%',
+                // R5: Ring kalinligi — 68% → 72% (ince ring = fintech; kalin = HUD/gaming)
+                cutout: '72%',
                 animation: {
                     duration: 600,
                     easing: 'easeOutQuart',

@@ -568,7 +568,9 @@ body::before {
         linear-gradient(180deg, transparent 0%, rgba(16, 185, 129, 0.06) 100%);
 }
 .kpi-card.kpi-ciro::before {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,55 C60,30 120,65 180,40 C240,15 300,55 400,30' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round'/></svg>");
+    /* Bug-fix: arc envelope normalize (y 30-55, mid ~42). 4 KPI arc'i
+       benzer gorsel yukseklikte → "floating" perception kaldirildi. */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,48 C100,32 200,52 300,38 C350,32 400,48 400,42' fill='none' stroke='%2310B981' stroke-width='2.5' stroke-linecap='round'/></svg>");
 }
 
 /* GIDER — coral */
@@ -579,7 +581,8 @@ body::before {
         linear-gradient(180deg, transparent 0%, rgba(244, 63, 94, 0.05) 100%);
 }
 .kpi-card.kpi-gider::before {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,40 C60,55 120,25 180,50 C240,70 300,35 400,55' fill='none' stroke='%23F43F5E' stroke-width='2.5' stroke-linecap='round'/></svg>");
+    /* Bug-fix: arc envelope normalize (y 32-52, mid ~42). */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,40 C100,52 200,35 300,48 C350,42 400,38 400,45' fill='none' stroke='%23F43F5E' stroke-width='2.5' stroke-linecap='round'/></svg>");
 }
 
 /* KAR — cyan */
@@ -590,7 +593,8 @@ body::before {
         linear-gradient(180deg, transparent 0%, rgba(6, 182, 212, 0.05) 100%);
 }
 .kpi-card.kpi-kar::before {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,50 C80,40 160,30 240,35 C320,40 360,25 400,20' fill='none' stroke='%2306B6D4' stroke-width='2.5' stroke-linecap='round'/></svg>");
+    /* Bug-fix: arc envelope normalize (y 30-50, mid ~40). */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,46 C100,38 200,48 300,35 C350,40 400,46 400,40' fill='none' stroke='%2306B6D4' stroke-width='2.5' stroke-linecap='round'/></svg>");
 }
 
 /* TREND — lime */
@@ -601,7 +605,10 @@ body::before {
         linear-gradient(180deg, transparent 0%, rgba(132, 204, 22, 0.05) 100%);
 }
 .kpi-card.kpi-trend::before {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,60 C80,50 160,55 240,30 C320,10 360,25 400,15' fill='none' stroke='%2384CC16' stroke-width='2.5' stroke-linecap='round'/></svg>");
+    /* Bug-fix: arc envelope normalize (y 32-50, mid ~42).
+       Eski (y 10-60) lime arc'i kart icine yukselip "floating" perception
+       yaratiyordu — diger 3 KPI ile gorsel mass simetrisi sagland. */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 80' preserveAspectRatio='none'><path d='M0,42 C100,50 200,38 300,46 C350,40 400,42 400,40' fill='none' stroke='%2384CC16' stroke-width='2.5' stroke-linecap='round'/></svg>");
 }
 
 @media (max-width: 760px) {
@@ -690,7 +697,10 @@ body::before {
     font-size: 2.5rem;
     font-weight: 800;
     letter-spacing: -0.035em;
-    margin-bottom: 14px;
+    /* Bug-fix: legacy margin-bottom kaldirildi.
+       .kpi-card-content (R3) zaten gap: 14px veriyor; ikinci 14px asimetrik
+       dikey ritim yaratiyordu (header→value 14, value→footer 28).
+       Esit gap = 4 KPI optical alignment'i tutarli. */
     line-height: 1.05;
     color: var(--text-primary);
     font-variant-numeric: tabular-nums;

@@ -1041,7 +1041,12 @@ window.HealthView = {
             '.health-actions-header { padding:16px 22px 12px; display:flex; align-items:center; gap:10px; border-bottom:1px solid #f1f5f9; }' +
             '.health-actions-title { font-size:13px; font-weight:800; color:#0f172a; letter-spacing:0.04em; text-transform:uppercase; }' +
             '.health-actions-count { margin-left:auto; font-size:11.5px; font-weight:700; color:#64748b; padding:3px 10px; background:#f8fafc; border-radius:999px; }' +
-            '.health-action-row { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid #f8fafc; cursor:pointer; transition:background 0.15s ease; position:relative; }' +
+            /* Bug-fix: Grid 4 kolon → 5 kolon. Markup'ta 5 child olabiliyor
+               (dot, body, IMPACT (opsiyonel), chip, arrow). Impact varken
+               (orn. COLA satiri) eski 4-kolon layout arrow'u 5. element olarak
+               yeni satira itiyordu. 5 kolon: impact yoksa o kolon bos kalir,
+               gap distribute eder; varken hepsi ayni satirda hizali. */
+            '.health-action-row { display:grid; grid-template-columns:auto 1fr auto auto auto; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid #f8fafc; cursor:pointer; transition:background 0.15s ease; position:relative; }' +
             '.health-action-row:last-child { border-bottom:none; }' +
             '.health-action-row::before { content:""; position:absolute; left:0; top:10px; bottom:10px; width:2px; background:transparent; border-radius:0 2px 2px 0; transition:background 0.15s ease; }' +
             '.health-action-row[onclick]:hover { background:#fafbfc; }' +

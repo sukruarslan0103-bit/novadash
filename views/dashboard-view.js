@@ -477,26 +477,134 @@ window.DashboardView = {
 
         window.destroyChart('expenseChart');
 
+        // V1.3: Sort by amount desc → en buyuk kategori index 0 = brand renk.
+        // Visual hierarchy upstream'e dokunmadan burada uygulanir.
+        var sorted = cats.slice().sort(function (a, b) {
+            return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+        });
+
+        var total = sorted.reduce(function (s, c) {
+            return s + (Number(c.amount) || 0);
+        }, 0);
+
+        // V1.3: Brand-aligned palette — random c.color yerine sequential
+        // brand+slate. Largest = brand emerald, geri kalanlar slate cool.
+        // Stripe/Linear pattern: hero category visual anchor, digerleri receder.
+        var palette = ['#10B981', '#475569', '#64748B', '#94A3B8', '#CBD5E1', '#E2E8F0'];
+        var colors = sorted.map(function (c, i) { return palette[i % palette.length]; });
+
+        // V1.3: Center hero plugin — chart center'inda toplam + label.
+        // Cutout %68 ile yer acildi.
+        var centerHeroPlugin = {
+            id: 'centerHero',
+            afterDraw: function (chart) {
+                var area = chart.chartArea;
+                if (!area) return;
+                var cx = (area.left + area.right) / 2;
+                var cy = (area.top + area.bottom) / 2;
+                var c = chart.ctx;
+
+                c.save();
+                c.textAlign = 'center';
+                c.textBaseline = 'middle';
+
+                // Toplam tutar — buyuk, weight 800, primary text color
+                c.font = '800 22px Inter, system-ui, sans-serif';
+                c.fillStyle = '#0F172A';
+                c.fillText('₺' + Math.round(total).toLocaleString('tr-TR'), cx, cy - 8);
+
+                // Label — UPPERCASE, kucuk, muted
+                c.font = '700 10px Inter, system-ui, sans-serif';
+                c.fillStyle = '#94A3B8';
+                c.fillText('TOPLAM GİDER', cx, cy + 14);
+
+                c.restore();
+            }
+        };
+
         window.STATE.charts.expenseChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: cats.map(function (c) { return c.name; }),
+                labels: sorted.map(function (c) { return c.name; }),
                 datasets: [{
-                    data: cats.map(function (c) { return c.amount; }),
-                    backgroundColor: cats.map(function (c) { return c.color || '#9CA3AF'; }),
-                    borderWidth: 0
+                    data: sorted.map(function (c) { return Number(c.amount) || 0; }),
+                    backgroundColor: colors,
+                    hoverBackgroundColor: colors,
+                    borderColor: '#FFFFFF',
+                    borderWidth: 2,
+                    hoverBorderColor: '#FFFFFF',
+                    hoverBorderWidth: 2,
+                    hoverOffset: 6
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '68%',
+                animation: {
+                    duration: 600,
+                    easing: 'easeOutQuart',
+                    animateRotate: true,
+                    animateScale: false
+                },
                 plugins: {
                     legend: {
                         position: 'bottom',
-                        labels: { padding: 16, usePointStyle: true }
+                        labels: {
+                            padding: 14,
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            boxHeight: 8,
+                            font: { family: 'Inter, system-ui, sans-serif', size: 12, weight: '600' },
+                            color: '#475569',
+                            // V1.3: Legend label = isim · %lik
+                            generateLabels: function (chart) {
+                                var d = chart.data;
+                                if (!d.labels.length || !d.datasets.length) return [];
+                                var ds = d.datasets[0];
+                                var sum = ds.data.reduce(function (a, b) { return a + b; }, 0);
+                                return d.labels.map(function (label, i) {
+                                    var v = Number(ds.data[i]) || 0;
+                                    var pct = sum > 0 ? Math.round(v / sum * 100) : 0;
+                                    var color = Array.isArray(ds.backgroundColor) ? ds.backgroundColor[i] : ds.backgroundColor;
+                                    return {
+                                        text: label + ' · %' + pct,
+                                        fillStyle: color,
+                                        strokeStyle: color,
+                                        lineWidth: 0,
+                                        pointStyle: 'circle',
+                                        hidden: false,
+                                        index: i
+                                    };
+                                });
+                            }
+                        }
+                    },
+                    // V1.3: Dark premium tooltip — bar chart ile aynı dil
+                    tooltip: {
+                        enabled: true,
+                        backgroundColor: '#0F172A',
+                        titleColor: '#F8FAFC',
+                        bodyColor: '#E2E8F0',
+                        titleFont: { family: 'Inter, system-ui, sans-serif', size: 12, weight: '700' },
+                        bodyFont: { family: 'Inter, system-ui, sans-serif', size: 13, weight: '600' },
+                        padding: { x: 12, y: 10 },
+                        cornerRadius: 8,
+                        displayColors: false,
+                        borderColor: 'rgba(255, 255, 255, 0.06)',
+                        borderWidth: 1,
+                        boxPadding: 4,
+                        callbacks: {
+                            label: function (item) {
+                                var v = Number(item.parsed) || 0;
+                                var pct = total > 0 ? Math.round(v / total * 100) : 0;
+                                return '₺' + v.toLocaleString('tr-TR') + ' · %' + pct;
+                            }
+                        }
                     }
                 }
-            }
+            },
+            plugins: [centerHeroPlugin]
         });
     },
 

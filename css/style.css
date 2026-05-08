@@ -155,16 +155,21 @@ body {
     letter-spacing: -0.01em;
 }
 
+/* V1.1: Hover NEUTRAL — interaktif feedback, brand-tint degil.
+   Brand renk yalnizca active state'te kullanilir. */
 .nav-link:hover {
-    background: var(--primary-50);
-    color: var(--primary-dark);
+    background: var(--surface-hover);
+    color: var(--text-primary);
 }
 
+/* V1.1: Active state SOFT — surface-active bg + dark brand text +
+   inset underline (layout-notr emphasis). Onceki full-saturation
+   pill + brand drop-shadow kaldirildi. */
 .nav-link.active {
-    background: var(--primary);
-    color: white;
+    background: var(--surface-active);
+    color: var(--primary-700);
     font-weight: 700;
-    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.3);
+    box-shadow: inset 0 -2px 0 var(--primary);
 }
 
 .topbar-right {
@@ -751,7 +756,8 @@ body {
     border-bottom: 1px solid var(--border-light);
 }
 
-.data-table tbody tr:hover { background: var(--primary-50); }
+/* V1.1: Tablo satir hover NEUTRAL (eskiden brand-tinted). */
+.data-table tbody tr:hover { background: var(--surface-hover); }
 .data-table tbody tr:last-child td { border-bottom: none; }
 
 /* ========================

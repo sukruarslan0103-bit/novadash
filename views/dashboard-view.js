@@ -201,7 +201,13 @@ window.DashboardView = {
                     '<div class="card-header"><div class="card-title">Kritik Uyarılar</div><span class="card-subtitle">' + data.alerts.length + ' uyarı</span></div>' +
                     '<div class="alert-list">' +
                         data.alerts.map(function (a) {
-                            return '<div class="alert-item ' + window.Formatters.escapeHtml(a.type) + '"><div class="alert-dot"></div><span>' + window.Formatters.escapeHtml(a.text) + '</span></div>';
+                            // R6: Severity-aware icon bubble + zengin text block.
+                            var type = String(a.type || 'warning');
+                            var icon = self._alertIconSvg(type);
+                            return '<div class="alert-item ' + window.Formatters.escapeHtml(type) + '">' +
+                                '<div class="alert-icon-bubble">' + icon + '</div>' +
+                                '<span class="alert-text">' + window.Formatters.escapeHtml(a.text) + '</span>' +
+                            '</div>';
                         }).join('') +
                     '</div>' +
                 '</div>' +
@@ -209,8 +215,10 @@ window.DashboardView = {
                     '<div class="card-header"><div class="card-title">En Çok Satan 5 Ürün</div><span class="card-subtitle">Bu ay</span></div>' +
                     '<table class="product-table"><thead><tr><th>#</th><th>Ürün</th><th>Satış</th><th>Kâr</th></tr></thead><tbody>' +
                         data.topProducts.map(function (p) {
+                            // R6: Rank 1 dominant brand; 2-5 soft brand-tinted (hierarchy).
+                            var rankCls = (Number(p.rank) === 1) ? 'product-rank is-leader' : 'product-rank';
                             return '<tr>' +
-                                '<td><span class="product-rank">' + p.rank + '</span></td>' +
+                                '<td><span class="' + rankCls + '">' + p.rank + '</span></td>' +
                                 '<td>' + window.Formatters.escapeHtml(p.name) + '</td>' +
                                 '<td>' + self.formatNumber(p.sales) + ' adet</td>' +
                                 '<td>' + self.formatCurrency(p.profit) + '</td>' +
@@ -293,6 +301,17 @@ window.DashboardView = {
             trend: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>'
         };
         return icons[key] || '';
+    },
+
+    // R6: Severity-aware alert icons (Lucide stroke). currentColor →
+    // .alert-icon-bubble semantic color'i pick eder.
+    _alertIconSvg(type) {
+        var icons = {
+            warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+            danger:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+            success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg>'
+        };
+        return icons[type] || icons.warning;
     },
 
     // V1.4: Tek global toggle binding (eskiden 4 kart × 2 button = 8 binding).

@@ -20,13 +20,34 @@
     --orange-light: #FFFBEB;
     --purple: #8B5CF6;
 
-    --bg: #F8FAFC;             /* hafif soğuk gri */
-    --card: #FFFFFF;
-    --border: #E5E7EB;
-    --border-light: #F1F5F9;
+    /* Surface canvas — Faz 1 surface refinement
+       Onceden #F8FAFC (cool blue tilt, sat 33%). Su an #F7FAF8: hue
+       brand-direction'a 1 tik kayar (140 green-cool), saturation 11%'e
+       duser. Goz "yesil" gormez ama uzun kullanimda daha sakin hisseder. */
+    --bg: #F7FAF8;
+    --card: #FFFFFF;           /* PURE WHITE — calisma yuzeyi, depth icin korunur */
+
+    /* Border hierarchy — bir tik guclendi.
+       --border 89% lightness (onceden 91%) → card-body ayrimi gozle hissedilir.
+       --border-light divider semantigine yakin, neutral-cool. */
+    --border: #E2E8F0;
+    --border-light: #EEF2F4;
+
     --text-primary: #0F172A;
     --text-secondary: #475569;
     --text-muted: #94A3B8;
+
+    /* Surface system tokens — Faz 1 (TANIMLI ama bu commit'te kullanilmiyor).
+       Faz 3'te component'lere tek tek opt-in adapte edilecek.
+       Disiplin:
+       - Body + brand-rooted yuzeyler: green-cool tilt
+       - Border'lar: blue-cool kalir (muddy onleme)
+       - Brand tint sadece --surface-active'da (selected/focused state) */
+    --surface-inset:  #F4F7F5;  /* input/textarea/code bg — body'den 2 puan koyu */
+    --surface-hover:  #F1F5F4;  /* NEUTRAL hover (nav, list, ghost button) */
+    --surface-active: #ECF5EF;  /* SELECTED/active — brand-tinted, sadece burada */
+    --border-strong:  #CBD5E1;  /* active input, focused border, emphasized ayrim */
+    --divider:        #EEF2F4;  /* tablo satir ayirici — semantigi border'dan ayri */
 
     --topbar-height: 60px;
     --subheader-height: 64px;

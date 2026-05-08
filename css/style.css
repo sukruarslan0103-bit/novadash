@@ -359,15 +359,8 @@ body {
    KPI CARDS — Large, bold, premium
    ======================== */
 
-/* V1.4: Tek global KPI period selector wrapper.
-   R1: Toolbar artik hero'nun sag tarafinda yasiyor (.dashboard-hero-toolbar).
-   Bu rule legacy uyumluluk icin korunuyor — boska olabilir. */
-.kpi-toolbar {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    margin-bottom: 14px;
-}
+/* V2 polish: Eski .kpi-toolbar rule kaldirildi (R1 sonrasi consumer YOK).
+   Toolbar simdi .dashboard-hero-toolbar icinde yasiyor. */
 
 /* ==========================================================================
    R1: WELCOME HERO + AMBIENT BACKGROUND
@@ -684,10 +677,13 @@ body::before {
 }
 
 .kpi-toggle-btn.active {
+    /* V2 polish: brand drop-shadow → neutral subtle shadow.
+       V1.1 nav-link.active disiplini ile tutarli. Calmer body uzerinde
+       active state hissi korunur, "loud" yansima yok. */
     background: var(--primary);
     color: white;
     border-radius: 20px;
-    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.22);
+    box-shadow: var(--shadow-sm);
 }
 
 .kpi-value {
@@ -788,12 +784,19 @@ body::before {
     transition: all 0.15s;
 }
 
-.card-action-btn.active,
-.card-action-btn:hover {
+/* V2 polish: hover ve active ayrildi (V1.1 nav-link disiplini ile tutarli).
+   Hover NEUTRAL — interaktif feedback. Active BRAND — selected state. */
+.card-action-btn:hover:not(.active):not(:disabled) {
+    background: var(--surface-hover);
+    border-color: var(--border);
+    color: var(--text-primary);
+}
+
+.card-action-btn.active {
     background: var(--primary);
     color: white;
     border-color: var(--primary);
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.22);
+    box-shadow: var(--shadow-sm);
 }
 
 .chart-container {

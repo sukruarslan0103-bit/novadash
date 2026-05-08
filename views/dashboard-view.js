@@ -241,7 +241,7 @@ window.DashboardView = {
                             '</svg>' +
                             '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#0f172a;" class="health-value">' + (data.healthScore || 0) + '</div>' +
                         '</div>' +
-                        '<span style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;">' + (data.healthScore || 0) + '<span style="font-size:13px;color:#64748b;font-weight:600;letter-spacing:0;"> / 100</span></span>' +
+                        '<span style="font-size:24px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' + (data.healthScore || 0) + '<span style="font-size:13px;color:#64748b;font-weight:600;letter-spacing:0;"> / 100</span></span>' +
                     '</div>' +
                 '</div>' +
                 '<div class="analysis-grid">' +

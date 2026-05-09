@@ -1335,17 +1335,16 @@ window.ExpensesView = {
                                 '</div>' +
 
                                 '<div id="newCategoryPanel" style="display:none;margin-top:14px;">' +
-                                    '<div style="display:grid;grid-template-columns:2fr 1fr auto;gap:12px;align-items:end;">' +
+                                    '<div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;">' +
                                         '<div>' +
                                             '<label style="display:block;margin-bottom:6px;font-weight:600;">Yeni Kategori Adı</label>' +
                                             '<input id="newCategoryName" type="text" placeholder="Örn: Doğalgaz" style="width:100%;padding:11px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
                                         '</div>' +
-                                        '<div>' +
-                                            '<label style="display:block;margin-bottom:6px;font-weight:600;">Renk</label>' +
-                                            '<input id="newCategoryColor" type="color" value="#64748B" style="width:100%;height:44px;padding:4px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
-                                        '</div>' +
                                         '<button id="createCategoryBtn" type="button" class="card-action-btn active" style="height:44px;padding:0 16px;">Kaydet</button>' +
                                     '</div>' +
+                                    /* Bug-fix: manuel color picker kaldirildi. Renk auto-assign:
+                                       kategori adi hash → 12-renk semantic palette (deterministic). */
+                                    '<div style="margin-top:8px;font-size:12px;color:#64748B;font-weight:500;">Renk otomatik atanır.</div>' +
                                 '</div>' +
                             '</div>' +
 
@@ -1567,11 +1566,11 @@ window.ExpensesView = {
     async handleCreateCategory() {
         try {
             var nameEl = document.getElementById('newCategoryName');
-            var colorEl = document.getElementById('newCategoryColor');
             var selectEl = document.getElementById('expenseCategory');
 
             var name = nameEl ? String(nameEl.value || '').trim() : '';
-            var color = colorEl ? String(colorEl.value || '#64748B') : '#64748B';
+            // Bug-fix: manuel picker yerine deterministic auto-assign (kategori adi hash).
+            var color = this.autoCategoryColor(name);
 
             if (!name) {
                 this.showToast('Kategori adı gerekli', 'warning');
@@ -1744,7 +1743,6 @@ window.ExpensesView = {
         var categoryEl = document.getElementById('expenseCategory');
         var descriptionEl = document.getElementById('expenseDescription');
         var nameEl = document.getElementById('newCategoryName');
-        var colorEl = document.getElementById('newCategoryColor');
         var panel = document.getElementById('newCategoryPanel');
 
         if (dateEl) dateEl.value = this.todayISO();
@@ -1752,8 +1750,31 @@ window.ExpensesView = {
         if (categoryEl) categoryEl.value = '';
         if (descriptionEl) descriptionEl.value = '';
         if (nameEl) nameEl.value = '';
-        if (colorEl) colorEl.value = '#64748B';
+        // Bug-fix: colorEl artik DOM'da yok (auto-color); reset gerekmez.
         if (panel) panel.style.display = 'none';
+    },
+
+    /* ============================================================
+       autoCategoryColor — semantic 12-renk palette + hash mapping.
+       Ayni kategori adi her zaman ayni rengi alir (cross-tenant tutarli).
+       Manuel picker UX friction'i ve random renk seciminin "themed dashboard"
+       riskini elimine eder.
+       ============================================================ */
+    _expensePalette: [
+        '#10B981', '#06B6D4', '#F43F5E', '#84CC16',
+        '#F59E0B', '#3B82F6', '#8B5CF6', '#EC4899',
+        '#0EA5E9', '#22C55E', '#A855F7', '#14B8A6'
+    ],
+
+    autoCategoryColor(name) {
+        var s = String(name || '').trim();
+        if (!s) return '#64748B';
+        var h = 0;
+        for (var i = 0; i < s.length; i++) {
+            h = (h * 31 + s.charCodeAt(i)) | 0;
+        }
+        var idx = Math.abs(h) % this._expensePalette.length;
+        return this._expensePalette[idx];
     },
 
     handleViewExpense(id) {

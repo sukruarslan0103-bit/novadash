@@ -1288,18 +1288,24 @@ window.HealthView = {
                 var ins = data.insights[j];
                 var pri = ins.priority || 0;
                 var dotClass = '', chipText = '', chipBg = '', chipColor = '', impactBg = '', impactColor = '';
+                // Bug-fix: 3-tier (pri ≤ 5000 hepsi "FIRSAT") → 4-tier semantic.
+                // pri = 0/null insight'lar passive info; FIRSAT etiketi yanlis.
+                // KRITIK > ÖNEMLI > FIRSAT (pri > 0, gercek opportunity) > NORMAL (passive).
                 if (pri > 50000) {
                     dotClass = 'critical'; chipText = 'KRİTİK'; chipBg = '#fef2f2'; chipColor = '#dc2626';
                     impactBg = '#fef2f2'; impactColor = '#dc2626';
                 } else if (pri > 5000) {
                     dotClass = 'warning'; chipText = 'ÖNEMLİ'; chipBg = '#fffbeb'; chipColor = '#b45309';
                     impactBg = '#fffbeb'; impactColor = '#b45309';
-                } else {
+                } else if (pri > 0) {
                     dotClass = ''; chipText = 'FIRSAT'; chipBg = '#f0fdf4'; chipColor = '#15803d';
                     impactBg = '#f0fdf4'; impactColor = '#15803d';
+                } else {
+                    dotClass = ''; chipText = 'NORMAL'; chipBg = '#F1F5F4'; chipColor = '#475569';
+                    impactBg = '#F1F5F4'; impactColor = '#475569';
                 }
-                var dotColor = (pri > 50000) ? '#dc2626' : (pri > 5000 ? '#d97706' : '#22c55e');
-                var stripeColor = (pri > 50000) ? '#ef4444' : (pri > 5000 ? '#f59e0b' : '#22c55e');
+                var dotColor = (pri > 50000) ? '#dc2626' : (pri > 5000 ? '#d97706' : (pri > 0 ? '#22c55e' : '#94a3b8'));
+                var stripeColor = (pri > 50000) ? '#ef4444' : (pri > 5000 ? '#f59e0b' : (pri > 0 ? '#22c55e' : '#cbd5e1'));
 
                 // Route null ise: onclick yok, arrow yok, cursor default → fake CTA yasak
                 var route = ins.route; // null olabilir (analysis bilgilendirme veya alert match yok)

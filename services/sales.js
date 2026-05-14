@@ -266,8 +266,10 @@ window.SalesService = (function() {
             salePayload.total = computedTotal;
         }
 
-        // === IDEMPOTENCY KEY (frontend-side, deterministik) ===
-        // md5(tenant_id | date | total | cash | card | notes)
+        // 047: idempotency_key frontend-side hesaplaniyor (formul DB
+        // fallback ile bire bir ayni: md5 tenant|date|total|cash|card|notes).
+        // Server NULL gelirse ayni formulu uretir. FAZ 1.3'te tek noktaya
+        // toplanacak.
         const _saleIdemKey = salePayload.idempotency_key || _md5(
             tenantId + '|' +
             normalizeDate(salePayload.date) + '|' +
@@ -278,51 +280,21 @@ window.SalesService = (function() {
         );
         salePayload.idempotency_key = _saleIdemKey;
 
-        if (!lines.length) {
-            // RPC-only — REST fallback YOK
-            const _client = window.SupabaseService.getClient();
-            if (!_client || typeof _client.rpc !== 'function') {
-                return { data: null, error: 'Supabase RPC client yok' };
-            }
-
-            const _rpcRes = await _client.rpc('create_sale_empty', {
-                p_payload: {
-                    date: normalizeDate(salePayload.date),
-                    total: toNumber(salePayload.total),
-                    cash: toNumber(salePayload.cash),
-                    card: toNumber(salePayload.card),
-                    notes: salePayload.notes || null,
-                    idempotency_key: _saleIdemKey
-                }
-            });
-
-            if (_rpcRes.error) {
-                return { data: null, error: _rpcRes.error.message || _rpcRes.error };
-            }
-
-            if (window.ViewCache) {
-                window.ViewCache.invalidate('sales:' + tenantId);
-                window.ViewCache.invalidate('dashboard:' + tenantId);
-            }
-
-            window.dispatchEvent(new Event('sales:updated'));
-
-            return { data: _rpcRes.data || null, error: null };
-        }
-
+        // 047: Tek canonical write path — create_sales_atomic.
+        // Urunsuz satis (lines = []) icin de ayni RPC kullanilir; DB
+        // tarafinda products bos -> sales header yazilir, product_sales
+        // bos kalir. create_sale_empty artik frontend'den cagirilmaz.
         // 046: costMap kaldirildi. Cost authority DB tarafinda.
         const products = buildProductsForRpc(lines);
 
-        if (!products.length) {
-            return { data: null, error: 'Geçerli ürün satırı bulunamadı' };
-        }
-
         const client = window.SupabaseService.getClient();
-        if (!client) {
-            return { data: null, error: 'Supabase client bulunamadı' };
+        if (!client || typeof client.rpc !== 'function') {
+            return { data: null, error: 'Supabase RPC client yok' };
         }
 
         try {
+            // 047: p_tenant_id payload'da YOK. Tenant DB tarafinda
+            // auth.uid() -> users.tenant_id ile resolve edilir.
             const { data, error } = await client.rpc('create_sales_atomic', {
                 p_sales: [{
                     date: normalizeDate(salePayload.date),
@@ -330,7 +302,6 @@ window.SalesService = (function() {
                     cash: toNumber(salePayload.cash),
                     card: toNumber(salePayload.card),
                     notes: salePayload.notes || null,
-                    created_by: salePayload.created_by || null,
                     idempotency_key: _saleIdemKey,
                     products: products
                 }]

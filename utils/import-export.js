@@ -457,8 +457,9 @@ window.ImportExport = (function () {
         }
 
         try {
+            // 047: p_tenant_id payload'da YOK. Tenant DB tarafinda
+            // auth.uid() -> users.tenant_id ile resolve edilir.
             const { data, error } = await client.rpc('create_sales_atomic', {
-                p_tenant_id: tenantId,
                 p_sales: salesBatch
             });
 

@@ -933,7 +933,11 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.7 — SALES WRITE RPCs (004_idempotency + 044)
+-- D.7 — SALES WRITE RPCs (004_idempotency + 044 + 046)
+--   046: DB-side authoritative cost snapshot.
+--        product_sales.cost server-side products.cost lookup'ından
+--        yazılır; frontend cost yok sayılır (silent ignore).
+--        Product yok / tenant mismatch / is_deleted=true: RAISE.
 -- ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION create_sales_atomic(
@@ -945,13 +949,17 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 AS $$
 DECLARE
-    v_sale        JSONB;
-    v_product     JSONB;
-    v_sale_id     UUID;
-    v_ikey        TEXT;
-    v_results     JSONB := '[]'::jsonb;
-    v_sale_record JSONB;
-    v_is_new      BOOLEAN;
+    v_sale          JSONB;
+    v_product       JSONB;
+    v_sale_id       UUID;
+    v_ikey          TEXT;
+    v_results       JSONB := '[]'::jsonb;
+    v_sale_record   JSONB;
+    v_is_new        BOOLEAN;
+
+    -- 046: server-side cost snapshot
+    v_product_id    UUID;
+    v_snapshot_cost NUMERIC;
 BEGIN
     IF p_tenant_id IS NULL THEN
         RAISE EXCEPTION 'tenant_id is required';
@@ -1004,18 +1012,40 @@ BEGIN
                AND jsonb_array_length(v_sale->'products') > 0 THEN
                 FOR v_product IN SELECT * FROM jsonb_array_elements(v_sale->'products')
                 LOOP
+                    v_product_id := (v_product->>'product_id')::UUID;
+
+                    IF v_product_id IS NULL THEN
+                        RAISE EXCEPTION 'product_id is required for sale line';
+                    END IF;
+
+                    -- 046: AUTHORITATIVE COST LOOKUP
+                    -- Frontend'den gelen 'cost' alani YOK SAYILIR.
+                    SELECT p.cost
+                      INTO v_snapshot_cost
+                      FROM products p
+                     WHERE p.id        = v_product_id
+                       AND p.tenant_id = p_tenant_id
+                       AND COALESCE(p.is_deleted, false) = false;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION
+                            'Product not found, deleted, or tenant mismatch: %',
+                            v_product_id
+                            USING ERRCODE = '42501';
+                    END IF;
+
                     INSERT INTO product_sales (
                         tenant_id, sale_id, product_id, date,
                         quantity, unit_price, total, cost
                     )
                     VALUES (
                         p_tenant_id, v_sale_id,
-                        (v_product->>'product_id')::UUID,
+                        v_product_id,
                         (v_sale->>'date')::DATE,
                         COALESCE((v_product->>'quantity')::INT, 0),
                         COALESCE((v_product->>'unit_price')::NUMERIC, 0),
                         COALESCE((v_product->>'total')::NUMERIC, 0),
-                        COALESCE((v_product->>'cost')::NUMERIC, 0)
+                        COALESCE(v_snapshot_cost, 0)   -- server-side snapshot
                     );
                 END LOOP;
             END IF;

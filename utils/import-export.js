@@ -349,11 +349,11 @@ window.ImportExport = (function () {
 
             if (!normalized) continue;
 
+            // 046: cost alani gereksiz — frontend cost authority degil.
             productMap.set(normalized, {
                 id: item.id,
                 name: rawName,
-                price: Number(item.price) || 0,
-                cost: Number(item.cost) || 0
+                price: Number(item.price) || 0
             });
         }
 
@@ -430,12 +430,13 @@ window.ImportExport = (function () {
                     return { ok: false, message: `Ürün eşlemesi kayboldu: ${row.urun}` };
                 }
 
+                // 046: cost alani gonderilmez. DB-side snapshot
+                // create_sales_atomic tarafindan products.cost'tan alinir.
                 products.push({
                     product_id: productInfo.id,
                     quantity: row.adetNumber,
                     unit_price: row.unitPrice,
-                    total: row.rowTotal,
-                    cost: Number(productInfo.cost) || 0
+                    total: row.rowTotal
                 });
             }
 

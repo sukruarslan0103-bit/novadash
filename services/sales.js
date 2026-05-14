@@ -94,60 +94,9 @@ window.SalesService = (function() {
         return payload;
     }
 
-    async function loadProductCostMap() {
-        const { data, error } = await window.ProductsService.getAll();
-        if (error || !Array.isArray(data)) return new Map();
-
-        const map = new Map();
-        data.forEach(p => {
-            map.set(p.id, toNumber(p.cost));
-        });
-
-        return map;
-    }
-
-    function buildProductSalesPayload(lines, saleRecord, costMap) {
-        const saleDate = normalizeDate(saleRecord?.date);
-        const saleId = saleRecord?.id || null;
-
-        return lines
-            .map((line) => {
-                const quantity = toNumber(
-                    line.quantity ?? line.qty ?? line.adet
-                );
-
-                const unitPrice = toNumber(
-                    line.unit_price ?? line.unitPrice ?? line.price ?? line.birim_fiyat
-                );
-
-                const total = toNumber(
-                    line.total ?? line.line_total ?? line.lineTotal ?? (quantity * unitPrice)
-                );
-
-                const productId =
-                    line.product_id ??
-                    line.productId ??
-                    line.id ??
-                    null;
-
-                if (!productId || quantity <= 0 || !saleId) {
-                    return null;
-                }
-
-                const cost = toNumber(costMap.get(productId) || 0);
-
-                return {
-                    sale_id: saleId,
-                    date: saleDate,
-                    product_id: productId,
-                    quantity,
-                    unit_price: unitPrice,
-                    total,
-                    cost
-                };
-            })
-            .filter(Boolean);
-    }
+    // 046: product_sales.cost artik DB tarafindan products.cost'tan snapshot
+    // alinir. Frontend cost gondermez. loadProductCostMap + buildProductSalesPayload
+    // dead-code oldugu icin kaldirildi.
 
     async function getAll(options = {}) {
         var baseFilters = [
@@ -274,7 +223,9 @@ window.SalesService = (function() {
         return { data: all, error: null, count: total };
     }
 
-    function buildProductsForRpc(lines, costMap) {
+    // 046: cost alani RPC payload'da YOK. DB-side snapshot create_sales_atomic
+    // tarafindan products.cost'tan alinir. Frontend cost authority degildir.
+    function buildProductsForRpc(lines) {
         return lines
             .map(function (line) {
                 const quantity = toNumber(line.quantity ?? line.qty ?? line.adet);
@@ -284,14 +235,11 @@ window.SalesService = (function() {
 
                 if (!productId || quantity <= 0) return null;
 
-                const cost = toNumber(costMap.get(productId) || 0);
-
                 return {
                     product_id: productId,
                     quantity: quantity,
                     unit_price: unitPrice,
-                    total: total,
-                    cost: cost
+                    total: total
                 };
             })
             .filter(Boolean);
@@ -362,14 +310,8 @@ window.SalesService = (function() {
             return { data: _rpcRes.data || null, error: null };
         }
 
-        let costMap;
-        try {
-            costMap = await loadProductCostMap();
-        } catch (e) {
-            return { data: null, error: 'Ürün maliyet verisi yüklenemedi' };
-        }
-
-        const products = buildProductsForRpc(lines, costMap);
+        // 046: costMap kaldirildi. Cost authority DB tarafinda.
+        const products = buildProductsForRpc(lines);
 
         if (!products.length) {
             return { data: null, error: 'Geçerli ürün satırı bulunamadı' };

@@ -402,12 +402,15 @@ body {
     transform: translateY(-1px);
 }
 
-/* R1.1: Sub-header'daki duplicate business-name gizli.
-   Tenant name artik dashboard-hero-title'da yasiyor. .sub-header'in geri
-   kalan yapisi (Nabiz beacon vs.) korunur. Diger view'ler kendi page
-   title'larini kendi container'larinda render eder. */
-.sub-header .business-name {
-    display: none;
+/* Hero v2: Sub-header tamamen gizli. Health beacon dashboard hero'nun
+   icine compact chip olarak tasindi (.hero-health-chip). Diger view'ler
+   icin sub-header zaten bos bir banttan ibaretti (business-name R1.1'de
+   gizlenmisti) — global hide layout'u sikilastirir.
+   HealthIndicator.set() dahili olarak hidden elementlere yazmaya devam
+   eder; no-op, error yok. router.setAppChrome inline display='' set etse
+   bile CSS specificity'si bu rule'u korur. */
+.sub-header {
+    display: none !important;
 }
 
 .dashboard-hero-subtitle {
@@ -423,6 +426,84 @@ body {
     flex-shrink: 0;
 }
 
+/* Hero v2: meta sarmalayici — health chip + period toggle tek hizada.
+   wrap ile mobile'da alt alta gecer; chip kendi compact kalir. */
+.dashboard-hero-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+/* Hero v2: Compact health intelligence chip.
+   Pill formatinda <a>: ring + score + label + chevron.
+   Click → #health. Hover'da subtle lift; constant glow YOK. */
+.hero-health-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 6px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    cursor: pointer;
+}
+
+.hero-health-chip:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+.hero-health-chip-ring {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+.hero-health-chip-score {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.hero-health-chip-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.hero-health-chip-arrow {
+    color: var(--text-muted);
+    margin-left: 2px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.hero-health-chip:hover .hero-health-chip-arrow {
+    transform: translateX(2px);
+    color: var(--text-secondary);
+}
+
+/* Semantic state — label color shift (ring zaten SVG inline color) */
+.hero-health-chip.is-critical .hero-health-chip-label { color: #dc2626; }
+.hero-health-chip.is-watch    .hero-health-chip-label { color: #b45309; }
+.hero-health-chip.is-normal   .hero-health-chip-label { color: #0e7490; }
+.hero-health-chip.is-good     .hero-health-chip-label { color: #047857; }
+
 @media (max-width: 760px) {
     .dashboard-hero {
         flex-direction: column;
@@ -431,6 +512,10 @@ body {
     }
     .dashboard-hero-title {
         font-size: 24px;
+    }
+    .dashboard-hero-meta {
+        width: 100%;
+        justify-content: space-between;
     }
 }
 

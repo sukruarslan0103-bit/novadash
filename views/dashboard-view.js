@@ -157,16 +157,24 @@ window.DashboardView = {
             ? window.Formatters.escapeHtml(tenantName)
             : tenantName;
 
+        // Hero v2: sub-header'daki saglik skoru kaldirildi (bant bos kaliyordu),
+        // compact intelligence chip olarak hero'nun saginda yer aliyor. Tiklanabilir,
+        // #health route'a yonlendirir.
+        var healthChipHtml = self._buildHealthChip(data.healthScore);
+
         container.innerHTML =
             '<header class="dashboard-hero">' +
                 '<div class="dashboard-hero-text">' +
                     '<h1 class="dashboard-hero-title">' + safeTenant + '</h1>' +
                     '<p class="dashboard-hero-subtitle">Bugünkü operasyon özeti hazır.</p>' +
                 '</div>' +
-                '<div class="dashboard-hero-toolbar">' +
-                    '<div class="kpi-toggle-group" id="globalKpiToggle">' +
-                        '<button class="kpi-toggle-btn' + monthlyActive + '" data-period="monthly" type="button">Aylık</button>' +
-                        '<button class="kpi-toggle-btn' + dailyActive + '" data-period="daily" type="button">Günlük</button>' +
+                '<div class="dashboard-hero-meta">' +
+                    healthChipHtml +
+                    '<div class="dashboard-hero-toolbar">' +
+                        '<div class="kpi-toggle-group" id="globalKpiToggle">' +
+                            '<button class="kpi-toggle-btn' + monthlyActive + '" data-period="monthly" type="button">Aylık</button>' +
+                            '<button class="kpi-toggle-btn' + dailyActive + '" data-period="daily" type="button">Günlük</button>' +
+                        '</div>' +
                     '</div>' +
                 '</div>' +
             '</header>' +
@@ -302,6 +310,34 @@ window.DashboardView = {
             trend: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>'
         };
         return icons[key] || '';
+    },
+
+    // Hero v2: Compact health score chip. Tiklanabilir <a href="#health">.
+    // Score'a gore semantic state (KRITIK/IZLENMELI/NORMAL/MUKEMMEL).
+    // Ring stroke-dasharray score yuzdesini gosterir.
+    _buildHealthChip(rawScore) {
+        var s = Math.max(0, Math.min(100, Math.round(Number(rawScore) || 0)));
+        var label, stateClass, color;
+        if (s >= 85) {
+            label = 'MÜKEMMEL'; stateClass = 'is-good'; color = '#059669';
+        } else if (s >= 70) {
+            label = 'NORMAL'; stateClass = 'is-normal'; color = '#0891b2';
+        } else if (s >= 50) {
+            label = 'İZLENMELİ'; stateClass = 'is-watch'; color = '#d97706';
+        } else {
+            label = 'KRİTİK'; stateClass = 'is-critical'; color = '#dc2626';
+        }
+        return '<a href="#health" class="hero-health-chip ' + stateClass + '" aria-label="Nabız skoru ' + s + ', detay için tıklayın">' +
+            '<span class="hero-health-chip-ring">' +
+                '<svg viewBox="0 0 36 36" width="32" height="32" style="transform:rotate(-90deg);">' +
+                    '<circle cx="18" cy="18" r="16" fill="none" stroke="#E2E8F0" stroke-width="3"></circle>' +
+                    '<circle cx="18" cy="18" r="16" fill="none" stroke="' + color + '" stroke-width="3" stroke-dasharray="' + s + ', 100" stroke-linecap="round"></circle>' +
+                '</svg>' +
+            '</span>' +
+            '<span class="hero-health-chip-score">' + s + '</span>' +
+            '<span class="hero-health-chip-label">' + label + '</span>' +
+            '<span class="hero-health-chip-arrow" aria-hidden="true">→</span>' +
+        '</a>';
     },
 
     // R6: Severity-aware alert icons (Lucide stroke). currentColor →

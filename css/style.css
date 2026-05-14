@@ -721,7 +721,14 @@ body::before {
     gap: 10px;
 }
 
-.kpi-trend {
+/* Bug-fix: .kpi-trend rule scope collision.
+   R3'te SATIŞ TREND kartına semantic class "kpi-trend" verildi
+   (.kpi-card.kpi-trend), bu mevcut .kpi-trend chip rule ile carpisti
+   → kartin display: inline-flex alip flex column layout'u bozuldu.
+   Cozum: chip rule'lari .kpi-footer scope'una alindi.
+   Card semantic class'i (.kpi-card.kpi-trend) bu rule ile artik
+   eslesmiyor, V2 layout temiz calisir. */
+.kpi-footer .kpi-trend {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -732,8 +739,8 @@ body::before {
     font-variant-numeric: tabular-nums;
 }
 
-.kpi-trend.up { color: var(--primary-dark); background: var(--primary-light); }
-.kpi-trend.down { color: #be123c; background: var(--red-light); }
+.kpi-footer .kpi-trend.up { color: var(--primary-dark); background: var(--primary-light); }
+.kpi-footer .kpi-trend.down { color: #be123c; background: var(--red-light); }
 
 .kpi-trend-label {
     /* R3.1: muted -> secondary, kontrast +. Trend chip'le yarismaz cunku

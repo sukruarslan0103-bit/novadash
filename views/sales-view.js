@@ -1537,7 +1537,7 @@ window.SalesView = {
                     window.ViewCache.invalidate('dashboard:');
                 }
                 await this.loadData(true);
-                this.setStatus('Bu satış zaten kayıtlı (duplicate).', 'info');
+                this.setStatus('Bu satış zaten kayıtlı.', 'error', 10000);
                 return;
             }
 
@@ -1550,7 +1550,7 @@ window.SalesView = {
                 window.ViewCache.invalidate('dashboard:');
             }
             await this.loadData(true);
-            this.setStatus('Satış kaydı eklendi.', 'success');
+            this.setStatus('Satış kaydı eklendi.', 'success', 10000);
             try { window.dispatchEvent(new Event('sales:updated')); } catch (e) { /* noop */ }
         } catch (err) {
             this.setStatus(this.getErrorMessage(err, 'Satış kaydedilemedi.'), 'error');
@@ -1806,11 +1806,13 @@ window.SalesView = {
     },
 
     clearStatus() {
+        // Sticky lock: ttl ile set edilen mesaj suresince clearStatus no-op.
+        if (this._statusLockUntil && Date.now() < this._statusLockUntil) return;
         const el = document.getElementById('salesStatus');
         if (el) el.innerHTML = '';
     },
 
-    setStatus(message, type) {
+    setStatus(message, type, ttlMs) {
         const el = document.getElementById('salesStatus');
         if (!el) return;
 
@@ -1831,6 +1833,25 @@ window.SalesView = {
                 ${this.escapeHtml(message)}
             </div>
         `;
+
+        // Onceki timer'i iptal et
+        if (this._statusTimer) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+        this._statusLockUntil = 0;
+
+        // ttlMs verildiyse: belirtilen sure sonunda otomatik temizle.
+        // Bu sure boyunca clearStatus (loadData vb.) cagrisi mesaji silemez.
+        if (ttlMs && ttlMs > 0) {
+            this._statusLockUntil = Date.now() + ttlMs;
+            this._statusTimer = setTimeout(() => {
+                const el2 = document.getElementById('salesStatus');
+                if (el2) el2.innerHTML = '';
+                this._statusLockUntil = 0;
+                this._statusTimer = null;
+            }, ttlMs);
+        }
     },
 
     getErrorMessage(error, fallback) {

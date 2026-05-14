@@ -438,15 +438,20 @@ body {
 
 /* Hero v2: Compact health intelligence chip.
    Pill formatinda <a>: ring + score + label + chevron.
-   Click → #health. Hover'da subtle lift; constant glow YOK. */
+   Click → #health.
+   v2.1: Semantic-tinted bg + state border + constant subtle shadow
+   verildi. Beyaz/faint variant ambient bg uzerinde "burdayim" demiyordu;
+   semantic light + 1.5px state border presence kazandirdi.
+   Glow/pulse/breathing yok; sadece hover lift + chevron slide. */
 .hero-health-chip {
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 14px 6px 6px;
+    padding: 7px 16px 7px 7px;
     background: var(--card);
-    border: 1px solid var(--border);
+    border: 1.5px solid var(--border);
     border-radius: 999px;
+    box-shadow: var(--shadow-sm);
     text-decoration: none;
     color: var(--text-primary);
     transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, background 0.15s ease;
@@ -454,8 +459,7 @@ body {
 }
 
 .hero-health-chip:hover {
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);
     transform: translateY(-1px);
 }
 
@@ -467,7 +471,8 @@ body {
 }
 
 .hero-health-chip-score {
-    font-size: 18px;
+    /* v2.1: 18 → 20px, biraz daha dominant. */
+    font-size: 20px;
     font-weight: 800;
     color: var(--text-primary);
     letter-spacing: -0.02em;
@@ -498,11 +503,34 @@ body {
     color: var(--text-secondary);
 }
 
-/* Semantic state — label color shift (ring zaten SVG inline color) */
-.hero-health-chip.is-critical .hero-health-chip-label { color: #dc2626; }
-.hero-health-chip.is-watch    .hero-health-chip-label { color: #b45309; }
-.hero-health-chip.is-normal   .hero-health-chip-label { color: #0e7490; }
-.hero-health-chip.is-good     .hero-health-chip-label { color: #047857; }
+/* v2.1: Semantic state — bg + border + label color per state.
+   Beyaz pill ambient bg uzerinde "burdayim" demiyordu; her state
+   simdi kendi soft tint'i ile presence kazanir. Border bir tik
+   semantic ton, label keskin semantic.
+   Ring color zaten SVG stroke inline (calculated _buildHealthChip). */
+.hero-health-chip.is-critical {
+    background: #FEF2F2;
+    border-color: #FCA5A5;
+}
+.hero-health-chip.is-critical .hero-health-chip-label { color: #b91c1c; }
+
+.hero-health-chip.is-watch {
+    background: #FFFBEB;
+    border-color: #FCD34D;
+}
+.hero-health-chip.is-watch .hero-health-chip-label { color: #b45309; }
+
+.hero-health-chip.is-normal {
+    background: #ECFEFF;
+    border-color: #67E8F9;
+}
+.hero-health-chip.is-normal .hero-health-chip-label { color: #0e7490; }
+
+.hero-health-chip.is-good {
+    background: #ECFDF5;
+    border-color: #6EE7B7;
+}
+.hero-health-chip.is-good .hero-health-chip-label { color: #047857; }
 
 @media (max-width: 760px) {
     .dashboard-hero {

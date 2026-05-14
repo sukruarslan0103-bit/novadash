@@ -1524,6 +1524,20 @@ window.SalesView = {
                 return;
             }
 
+            // 047: aynı idempotency_key ile ikinci çağrıda DB duplicate
+            // skip yapıyor (yeni kayıt YOK). Kullanıcıya net mesaj göster.
+            if (res && res.duplicate) {
+                this.closeQuickSale();
+                this.setStatus('Bu satış zaten kayıtlı (duplicate).', 'info');
+                this._lastFetchKey = '';
+                if (window.ViewCache) {
+                    window.ViewCache.invalidate('sales:' + this._getTenantId());
+                    window.ViewCache.invalidate('dashboard:');
+                }
+                await this.loadData(true);
+                return;
+            }
+
             this.closeQuickSale();
             this.setStatus('Satış kaydı eklendi.', 'success');
 

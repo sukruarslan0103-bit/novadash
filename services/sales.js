@@ -311,6 +311,11 @@ window.SalesService = (function() {
                 return { data: null, error: error.message || error };
             }
 
+            // 047: create_sales_atomic batch'teki tum satislar duplicate
+            // ise '[]' (bos array) doner. UI bunu basari gibi gosteriyordu
+            // (yanlis feedback). Caller'in ayirt edebilmesi icin
+            // `duplicate` field'i ekleniyor (backward-compat: opsiyonel).
+            const isDuplicate = Array.isArray(data) && data.length === 0;
             const result = Array.isArray(data) ? data[0] : data;
 
             if (window.ViewCache) {
@@ -320,7 +325,7 @@ window.SalesService = (function() {
 
             window.dispatchEvent(new Event('sales:updated'));
 
-            return { data: result || null, error: null };
+            return { data: result || null, error: null, duplicate: isDuplicate };
         } catch (err) {
             return { data: null, error: err?.message || 'Satış oluşturulurken hata oluştu' };
         }

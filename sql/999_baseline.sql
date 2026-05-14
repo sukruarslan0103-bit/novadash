@@ -933,22 +933,31 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.7 — SALES WRITE RPCs (004_idempotency + 044 + 046)
+-- D.7 — SALES WRITE RPCs (004_idempotency + 044 + 046 + 047)
 --   046: DB-side authoritative cost snapshot.
 --        product_sales.cost server-side products.cost lookup'ından
 --        yazılır; frontend cost yok sayılır (silent ignore).
 --        Product yok / tenant mismatch / is_deleted=true: RAISE.
+--   047: SECURITY DEFINER + search_path standardı.
+--        Tenant resolve auth.uid() -> users.tenant_id (DB-side).
+--        Legacy p_tenant_id param backward-compat DEFAULT NULL;
+--        verilirse cross-check, mismatch -> RAISE.
+--        Server-side idempotency_key fallback (formül aynı).
 -- ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION create_sales_atomic(
-    p_tenant_id UUID,
-    p_sales     JSONB
+    p_tenant_id UUID  DEFAULT NULL,
+    p_sales     JSONB DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
+    v_auth_uid      UUID;
+    v_tenant_id     UUID;
+
     v_sale          JSONB;
     v_product       JSONB;
     v_sale_id       UUID;
@@ -961,27 +970,60 @@ DECLARE
     v_product_id    UUID;
     v_snapshot_cost NUMERIC;
 BEGIN
-    IF p_tenant_id IS NULL THEN
-        RAISE EXCEPTION 'tenant_id is required';
+    -- 047: AUTH
+    v_auth_uid := auth.uid();
+    IF v_auth_uid IS NULL THEN
+        RAISE EXCEPTION 'Unauthorized: no authenticated user'
+            USING ERRCODE = '42501';
+    END IF;
+
+    SELECT u.tenant_id
+      INTO v_tenant_id
+      FROM users u
+     WHERE u.id = v_auth_uid
+       AND u.is_active = true;
+
+    IF v_tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Unauthorized: tenant not found or user disabled'
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- 047: legacy p_tenant_id cross-check
+    IF p_tenant_id IS NOT NULL
+       AND p_tenant_id IS DISTINCT FROM v_tenant_id THEN
+        RAISE EXCEPTION 'Tenant mismatch'
+            USING ERRCODE = '42501';
     END IF;
 
     IF p_sales IS NULL OR jsonb_array_length(p_sales) = 0 THEN
-        RAISE EXCEPTION 'At least one sale is required';
+        RAISE EXCEPTION 'p_sales: at least one sale is required';
     END IF;
 
     FOR v_sale IN SELECT * FROM jsonb_array_elements(p_sales)
     LOOP
-        v_ikey    := v_sale->>'idempotency_key';
+        -- 047: server-side idempotency_key fallback (formül korunur)
+        v_ikey := COALESCE(
+            v_sale->>'idempotency_key',
+            md5(
+                v_tenant_id::text                                   || '|' ||
+                COALESCE(v_sale->>'date', '')                       || '|' ||
+                COALESCE((v_sale->>'total')::numeric, 0)::text      || '|' ||
+                COALESCE((v_sale->>'cash')::numeric, 0)::text       || '|' ||
+                COALESCE((v_sale->>'card')::numeric, 0)::text       || '|' ||
+                COALESCE(v_sale->>'notes', '')
+            )
+        );
+
         v_sale_id := NULL;
         v_is_new  := FALSE;
 
         IF v_ikey IS NOT NULL THEN
             SELECT id INTO v_sale_id
-            FROM sales
-            WHERE idempotency_key = v_ikey
-              AND tenant_id   = p_tenant_id
-              AND is_deleted  = false
-            LIMIT 1;
+              FROM sales
+             WHERE idempotency_key = v_ikey
+               AND tenant_id       = v_tenant_id
+               AND is_deleted      = false
+             LIMIT 1;
         END IF;
 
         IF v_sale_id IS NULL THEN
@@ -990,15 +1032,13 @@ BEGIN
                 notes, created_by, idempotency_key
             )
             VALUES (
-                p_tenant_id,
+                v_tenant_id,
                 (v_sale->>'date')::DATE,
                 COALESCE((v_sale->>'total')::NUMERIC, 0),
                 COALESCE((v_sale->>'cash')::NUMERIC, 0),
                 COALESCE((v_sale->>'card')::NUMERIC, 0),
                 v_sale->>'notes',
-                CASE WHEN v_sale->>'created_by' IS NOT NULL
-                     THEN (v_sale->>'created_by')::UUID
-                     ELSE NULL END,
+                v_auth_uid,
                 v_ikey
             )
             RETURNING id INTO v_sale_id;
@@ -1018,13 +1058,13 @@ BEGIN
                         RAISE EXCEPTION 'product_id is required for sale line';
                     END IF;
 
-                    -- 046: AUTHORITATIVE COST LOOKUP
-                    -- Frontend'den gelen 'cost' alani YOK SAYILIR.
+                    -- 046: AUTHORITATIVE COST LOOKUP (047: v_tenant_id)
+                    -- DEFINER altinda RLS bypass; manuel tenant guard zorunlu.
                     SELECT p.cost
                       INTO v_snapshot_cost
                       FROM products p
                      WHERE p.id        = v_product_id
-                       AND p.tenant_id = p_tenant_id
+                       AND p.tenant_id = v_tenant_id
                        AND COALESCE(p.is_deleted, false) = false;
 
                     IF NOT FOUND THEN
@@ -1039,7 +1079,7 @@ BEGIN
                         quantity, unit_price, total, cost
                     )
                     VALUES (
-                        p_tenant_id, v_sale_id,
+                        v_tenant_id, v_sale_id,
                         v_product_id,
                         (v_sale->>'date')::DATE,
                         COALESCE((v_product->>'quantity')::INT, 0),

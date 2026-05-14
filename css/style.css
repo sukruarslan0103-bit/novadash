@@ -493,6 +493,15 @@ body::before {
     height: 100%;
 }
 
+/* Bug-fix: Footer her KPI'da bottom'a sabit. Eskiden empty space footer'in
+   ALTINA dusuyordu (natural flow), kisa degerlerde (orn. %0.0) trend chip
+   yukarida kaliyor, uzun degerlerde (₺116.200) bottom'a yakin oluyordu.
+   margin-top:auto → flex column'da footer otomatik bottom'a iter.
+   Tum 4 KPI'nin trend chip'i artik ayni baseline'da. */
+.kpi-card-content .kpi-footer {
+    margin-top: auto;
+}
+
 /* V2 .kpi-header — daha spesifik selector (.kpi-card-content nested)
    ile eski rule'larin justify-content: space-between artikalari neutralize. */
 .kpi-card-content .kpi-header,

@@ -1526,20 +1526,22 @@ window.SalesView = {
 
             // 047: aynı idempotency_key ile ikinci çağrıda DB duplicate
             // skip yapıyor (yeni kayıt YOK). Kullanıcıya net mesaj göster.
+            // NOT: setStatus loadData(true) SONRASINA konuldu çünkü
+            // loadData başarı yolunda clearStatus() çağırıp mesajı
+            // siliyor (line 450). Aynı sıra success branch'te de.
             if (res && res.duplicate) {
                 this.closeQuickSale();
-                this.setStatus('Bu satış zaten kayıtlı (duplicate).', 'info');
                 this._lastFetchKey = '';
                 if (window.ViewCache) {
                     window.ViewCache.invalidate('sales:' + this._getTenantId());
                     window.ViewCache.invalidate('dashboard:');
                 }
                 await this.loadData(true);
+                this.setStatus('Bu satış zaten kayıtlı (duplicate).', 'info');
                 return;
             }
 
             this.closeQuickSale();
-            this.setStatus('Satış kaydı eklendi.', 'success');
 
             // refresh sales list + invalidate caches
             this._lastFetchKey = '';
@@ -1548,6 +1550,7 @@ window.SalesView = {
                 window.ViewCache.invalidate('dashboard:');
             }
             await this.loadData(true);
+            this.setStatus('Satış kaydı eklendi.', 'success');
             try { window.dispatchEvent(new Event('sales:updated')); } catch (e) { /* noop */ }
         } catch (err) {
             this.setStatus(this.getErrorMessage(err, 'Satış kaydedilemedi.'), 'error');

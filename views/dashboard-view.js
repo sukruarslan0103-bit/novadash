@@ -181,10 +181,9 @@ window.DashboardView = {
                 '<div class="card">' +
                     '<div class="card-header">' +
                         '<div><div class="card-title">7 Günlük Satış Trendi</div><div class="card-subtitle">Günlük ciro dağılımı</div></div>' +
-                        '<div class="card-actions">' +
-                            '<button class="card-action-btn active" type="button">7 Gün</button>' +
-                            '<button class="card-action-btn" type="button" disabled>30 Gün</button>' +
-                        '</div>' +
+                        // Bug-fix: 7 Gün/30 Gün toggle kaldirildi.
+                        // 30 Gün hicbir zaman implement edilmemis (disabled, click handler yok).
+                        // 7 Gün tek secenek olunca toggle anlamsiz; title zaten "7 Günlük..." diyor.
                     '</div>' +
                     '<div class="chart-container"><canvas id="salesChart"></canvas></div>' +
                 '</div>' +

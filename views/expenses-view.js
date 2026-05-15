@@ -1320,7 +1320,7 @@ window.ExpensesView = {
                                     '<input id="expenseDescription" type="text" placeholder="Gider açıklaması" style="width:100%;padding:11px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
                                 '</div>' +
                                 '<div>' +
-                                    '<label style="display:block;margin-bottom:6px;font-weight:600;">Tutar</label>' +
+                                    '<label style="display:block;margin-bottom:6px;font-weight:600;">Ödenen Tutar (KDV Dahil, ₺)</label>' +
                                     '<input id="expenseAmount" type="number" min="0" step="0.01" placeholder="0.00" style="width:220px;max-width:100%;padding:11px 12px;border:1px solid #D9E1EC;border-radius:10px;background:#fff;">' +
                                 '</div>' +
                             '</div>' +
@@ -1804,7 +1804,7 @@ window.ExpensesView = {
                     '<div style="margin-top:6px;font-size:16px;font-weight:600;color:#0F172A;">' + this.escapeHtml(row.description || '-') + '</div>' +
                 '</div>' +
                 '<div style="padding:14px;border:1px solid #E2E8F0;border-radius:14px;background:#F8FAFC;grid-column:1 / -1;">' +
-                    '<div style="font-size:12px;font-weight:700;color:#64748B;">TUTAR</div>' +
+                    '<div style="font-size:12px;font-weight:700;color:#64748B;">ÖDENEN TUTAR (KDV DAHİL)</div>' +
                     '<div style="margin-top:6px;font-size:24px;font-weight:800;color:#16A34A;">' + this.escapeHtml(this.formatCurrency(row.amount)) + '</div>' +
                 '</div>' +
             '</div>';

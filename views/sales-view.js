@@ -200,7 +200,7 @@ window.SalesView = {
                         </div>
 
                         <div style="margin-bottom:14px;">
-                            <label style="display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;">Toplam Satış Tutarı (₺)</label>
+                            <label style="display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px;">Toplam Satış (KDV Dahil, ₺)</label>
                             <input id="quickSaleTotal" type="number" min="0" step="0.01" placeholder="0,00" style="width:100%;padding:11px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:14px;color:#0f172a;background:#fff;box-sizing:border-box;font-family:inherit;">
                         </div>
 
@@ -982,6 +982,7 @@ window.SalesView = {
                             `).join('')}
                         </tbody>
                     </table>
+                    <div style="text-align:right;font-size:11px;color:#94a3b8;margin-top:6px;font-style:italic;">Tüm tutarlar KDV dahildir.</div>
                 </div>
                 <div style="
                     display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));

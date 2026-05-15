@@ -168,7 +168,7 @@ window.ProductsView = {
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Satış Tutarı (₺)</label>
+                        <label class="form-label">Satış Fiyatı (KDV Dahil, ₺)</label>
                         <input type="number" class="form-input" id="productPrice" placeholder="0.00" step="0.01" min="0">
                     </div>
 

@@ -104,8 +104,7 @@ END $pre$;
 
 -- B.1 sales
 COMMENT ON COLUMN public.sales.total IS
-    'KDV DAHIL gross satis tutari (TRY). Invariant: cash+card=total (UI ready'+
-    'leninince enforce edilecek).';
+    'KDV DAHIL gross satis tutari (TRY). Invariant: cash+card=total (UI hazirlaninca enforce edilecek).';
 COMMENT ON COLUMN public.sales.cash IS
     'KDV DAHIL nakit tahsilat.';
 COMMENT ON COLUMN public.sales.card IS

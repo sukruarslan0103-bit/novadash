@@ -252,9 +252,11 @@ CREATE TABLE IF NOT EXISTS purchases (
     tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     product_id      UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     quantity        NUMERIC(12,2) NOT NULL,
-    total_price     NUMERIC(12,2) NOT NULL,
+    total_price     NUMERIC(12,2) NOT NULL
+                    CONSTRAINT purchases_total_nonneg CHECK (total_price >= 0),   -- 050
     unit_cost       NUMERIC(12,2) NOT NULL,
-    vat_rate        NUMERIC(5,2)  NOT NULL DEFAULT 0,
+    vat_rate        NUMERIC(5,2)  NOT NULL DEFAULT 0
+                    CONSTRAINT purchases_vat_range CHECK (vat_rate >= 0 AND vat_rate <= 100), -- 050
     net_total       NUMERIC(12,2) NOT NULL,
     idempotency_key TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -335,7 +337,7 @@ CREATE TABLE IF NOT EXISTS purchase_items (
     base_quantity            NUMERIC(18,6),
     base_unit_cost           NUMERIC(18,6),
 
-    vat_rate                 NUMERIC(5,2) NOT NULL DEFAULT 0
+    vat_rate                 NUMERIC(5,2) NOT NULL DEFAULT 20  -- FAZ 1.4 / 050: Türkiye standard KDV
                              CHECK (vat_rate >= 0 AND vat_rate <= 100),
 
     discount_rate            NUMERIC(5,2) NOT NULL DEFAULT 0
@@ -397,6 +399,33 @@ SELECT
     END AS priority
 FROM products p
 WHERE is_deleted = false;
+
+
+-- ============================================================
+-- B.99 — FAZ 1.4 / 050 CANONICAL FINANCE INVARIANTS (CHECK)
+--   docs/FINANCE.md v1.0 kural 1, 5, 8, 14. Idempotent ALTER bloklari.
+--   purchase_items zaten inline CHECK'lere sahip (B section); burada
+--   sales / product_sales / expenses / purchases icin eklenir.
+-- ============================================================
+
+ALTER TABLE public.sales
+    DROP CONSTRAINT IF EXISTS sales_total_nonneg;
+ALTER TABLE public.sales
+    ADD  CONSTRAINT sales_total_nonneg CHECK (total >= 0);
+
+ALTER TABLE public.product_sales
+    DROP CONSTRAINT IF EXISTS product_sales_amounts_nonneg;
+ALTER TABLE public.product_sales
+    ADD  CONSTRAINT product_sales_amounts_nonneg
+    CHECK (total >= 0 AND unit_price >= 0 AND cost >= 0 AND quantity >= 0);
+
+ALTER TABLE public.expenses
+    DROP CONSTRAINT IF EXISTS expenses_amount_nonneg;
+ALTER TABLE public.expenses
+    ADD  CONSTRAINT expenses_amount_nonneg CHECK (amount >= 0);
+
+-- Not: purchases_total_nonneg ve purchases_vat_range B.14 icinde
+-- inline CHECK olarak tanimlandi (CREATE TABLE bloku).
 
 
 -- ============================================================
@@ -933,7 +962,7 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.7 — SALES WRITE RPCs (004_idempotency + 044 + 046 + 047)
+-- D.7 — SALES WRITE RPCs (004_idempotency + 044 + 046 + 047 + 050)
 --   046: DB-side authoritative cost snapshot.
 --        product_sales.cost server-side products.cost lookup'ından
 --        yazılır; frontend cost yok sayılır (silent ignore).
@@ -1306,7 +1335,7 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.8 — EXPENSE WRITE RPCs (045 + insert_expense)
+-- D.8 — EXPENSE WRITE RPCs (045 + insert_expense + 050)
 --
 -- insert_expense:
 --   tenant_id server-side resolve (auth.uid -> users.tenant_id)
@@ -1869,7 +1898,13 @@ ALTER TABLE public.users
     ENABLE ALWAYS TRIGGER trg_users_lock_critical_columns;
 
 
--- F.4 — purchase_items BEFORE INSERT/UPDATE: fill_base (021)
+-- F.4 — purchase_items BEFORE INSERT/UPDATE: fill_base (021 + 051 VAT+discount aware)
+--   051 (FAZ 1.4): base_unit_cost artik KDV DAHIL + iskonto SONRASI olarak
+--   yazilir. docs/FINANCE.md kural 11+12.
+--     v_net      = COALESCE(line_total,
+--                           quantity * unit_cost * (1 - discount_rate/100))
+--     v_with_vat = v_net * (1 + vat_rate/100)
+--     base_unit_cost = v_with_vat / base_quantity
 CREATE OR REPLACE FUNCTION trg_fn_purchase_items_fill_base()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -1877,16 +1912,20 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-    v_base_unit TEXT;
-    v_qty_base  NUMERIC;
+    v_base_unit  TEXT;
+    v_qty_base   NUMERIC;
+    v_net        NUMERIC;     -- KDV HARIC, iskonto SONRASI
+    v_with_vat   NUMERIC;     -- KDV DAHIL, iskonto sonrasi
+    v_discount   NUMERIC;
+    v_vat        NUMERIC;
 BEGIN
     IF NEW.raw_material_id IS NULL THEN
         RETURN NEW;
     END IF;
 
     SELECT base_unit INTO v_base_unit
-    FROM raw_materials
-    WHERE id = NEW.raw_material_id;
+      FROM raw_materials
+     WHERE id = NEW.raw_material_id;
 
     IF v_base_unit IS NULL THEN
         NEW.base_quantity  := NULL;
@@ -1906,10 +1945,25 @@ BEGIN
         RETURN NEW;
     END;
 
-    NEW.base_quantity  := v_qty_base;
+    NEW.base_quantity := v_qty_base;
 
-    IF v_qty_base IS NOT NULL AND v_qty_base > 0 AND NEW.line_total IS NOT NULL THEN
-        NEW.base_unit_cost := NEW.line_total / v_qty_base;
+    -- 051 canonical hesap (docs/FINANCE.md kural 11+12)
+    v_discount := COALESCE(NEW.discount_rate, 0);
+    v_vat      := COALESCE(NEW.vat_rate,      0);
+
+    IF NEW.line_total IS NOT NULL AND NEW.line_total >= 0 THEN
+        v_net := NEW.line_total;                                   -- kural 11: zaten iskonto sonrasi
+    ELSIF NEW.unit_cost IS NOT NULL AND NEW.unit_cost >= 0 THEN
+        v_net := NEW.quantity * NEW.unit_cost * (1 - v_discount / 100);  -- fallback
+    ELSE
+        NEW.base_unit_cost := NULL;
+        RETURN NEW;
+    END IF;
+
+    v_with_vat := v_net * (1 + v_vat / 100);
+
+    IF v_qty_base IS NOT NULL AND v_qty_base > 0 THEN
+        NEW.base_unit_cost := v_with_vat / v_qty_base;
     ELSE
         NEW.base_unit_cost := NULL;
     END IF;
@@ -3240,6 +3294,421 @@ EXCEPTION WHEN OTHERS THEN
     RAISE EXCEPTION 'RESTORE_FAILED: %', SQLERRM;
 END;
 $$;
+
+
+-- ============================================================
+-- H.9 — MAINTENANCE FUNCTIONS (052)
+--   ADMIN MAINTENANCE — NOT FOR CLIENT-FACING RPC USAGE.
+--   PRE-052 base_unit_cost satirlarini canonical FAZ 1.4 formul ile
+--   yeniden hesaplar. Dogal cascade trigger zinciri otomatik calisir.
+--   product_sales.cost IMMUTABLE — 3 katman dogrulama (count + sum + MD5).
+--   p_dry_run TRUE -> analiz; FALSE -> UPDATE + cascade.
+--   p_tenant_id NULL -> tum tenantlar; dolu -> tek tenant.
+--   Safety threshold: would_change > 50000 -> RAISE.
+--   Idempotent: WHERE old IS DISTINCT FROM new.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.rebackfill_purchase_items_base_cost(
+    p_tenant_id UUID    DEFAULT NULL,
+    p_dry_run   BOOLEAN DEFAULT TRUE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_total_scope       BIGINT;
+    v_would_change      BIGINT;
+    v_unchanged         BIGINT;
+    v_null_result       BIGINT;
+    v_bad_base_qty      BIGINT;
+    v_sample            JSONB;
+
+    v_updated_pi        BIGINT;
+
+    v_ps_count_before   BIGINT;
+    v_ps_count_after    BIGINT;
+    v_ps_sum_before     NUMERIC;
+    v_ps_sum_after      NUMERIC;
+    v_ps_cs_before      TEXT;
+    v_ps_cs_after       TEXT;
+
+    v_rm_cs_before      TEXT;
+    v_rm_cs_after       TEXT;
+    v_prod_cs_before    TEXT;
+    v_prod_cs_after     TEXT;
+    v_rm_changed        INT;
+    v_prod_changed      INT;
+
+    v_safety_max        BIGINT := 50000;
+
+    v_started_at        TIMESTAMPTZ := clock_timestamp();
+    v_elapsed_ms        INT;
+BEGIN
+    RAISE NOTICE '[052] mode=% tenant=% (NULL = global)',
+        CASE WHEN p_dry_run THEN 'DRY-RUN' ELSE 'LIVE' END,
+        COALESCE(p_tenant_id::text, '<all>');
+
+    WITH calc AS (
+        SELECT
+            pi.id,
+            pi.tenant_id,
+            pi.raw_material_id,
+            pi.base_unit_cost AS old_value,
+            (
+                CASE
+                    WHEN pi.line_total IS NOT NULL AND pi.line_total >= 0
+                        THEN pi.line_total
+                    WHEN pi.unit_cost IS NOT NULL AND pi.unit_cost >= 0
+                        THEN pi.quantity * pi.unit_cost
+                             * (1 - COALESCE(pi.discount_rate, 0) / 100.0)
+                    ELSE NULL
+                END
+                * (1 + COALESCE(pi.vat_rate, 0) / 100.0)
+                / NULLIF(pi.base_quantity, 0)
+            ) AS new_value
+        FROM public.purchase_items pi
+        WHERE pi.is_deleted = false
+          AND pi.base_quantity IS NOT NULL
+          AND pi.base_quantity > 0
+          AND (p_tenant_id IS NULL OR pi.tenant_id = p_tenant_id)
+    )
+    SELECT
+        count(*),
+        count(*) FILTER (
+            WHERE old_value IS DISTINCT FROM new_value AND new_value IS NOT NULL
+        ),
+        count(*) FILTER (
+            WHERE old_value IS NOT DISTINCT FROM new_value
+        ),
+        count(*) FILTER (
+            WHERE new_value IS NULL
+        )
+    INTO v_total_scope, v_would_change, v_unchanged, v_null_result
+    FROM calc;
+
+    WITH calc AS (
+        SELECT
+            pi.id,
+            pi.tenant_id,
+            pi.raw_material_id,
+            pi.quantity, pi.unit_cost, pi.line_total,
+            pi.vat_rate, pi.discount_rate, pi.base_quantity,
+            pi.base_unit_cost AS old_value,
+            (
+                CASE
+                    WHEN pi.line_total IS NOT NULL AND pi.line_total >= 0
+                        THEN pi.line_total
+                    WHEN pi.unit_cost IS NOT NULL AND pi.unit_cost >= 0
+                        THEN pi.quantity * pi.unit_cost
+                             * (1 - COALESCE(pi.discount_rate, 0) / 100.0)
+                    ELSE NULL
+                END
+                * (1 + COALESCE(pi.vat_rate, 0) / 100.0)
+                / NULLIF(pi.base_quantity, 0)
+            ) AS new_value
+        FROM public.purchase_items pi
+        WHERE pi.is_deleted = false
+          AND pi.base_quantity IS NOT NULL
+          AND pi.base_quantity > 0
+          AND (p_tenant_id IS NULL OR pi.tenant_id = p_tenant_id)
+    )
+    SELECT jsonb_agg(row_to_json(s)) INTO v_sample
+      FROM (
+          SELECT
+              id, tenant_id, raw_material_id,
+              quantity, unit_cost, line_total,
+              vat_rate, discount_rate, base_quantity,
+              ROUND(old_value::numeric, 6) AS old_value,
+              ROUND(new_value::numeric, 6) AS new_value,
+              CASE WHEN old_value IS NULL OR old_value = 0
+                   THEN NULL
+                   ELSE ROUND(((new_value - old_value) / old_value * 100)::numeric, 2)
+              END AS delta_pct
+          FROM calc
+          WHERE old_value IS DISTINCT FROM new_value
+            AND new_value IS NOT NULL
+          ORDER BY raw_material_id
+          LIMIT 5
+      ) s;
+
+    SELECT count(*) INTO v_bad_base_qty
+      FROM public.purchase_items pi
+     WHERE pi.is_deleted = false
+       AND pi.base_quantity IS NOT NULL
+       AND pi.base_quantity <= 0
+       AND (p_tenant_id IS NULL OR pi.tenant_id = p_tenant_id);
+
+    RAISE NOTICE '[052] scope=% would_change=% unchanged=% null_result=% bad_base_qty=%',
+        v_total_scope, v_would_change, v_unchanged, v_null_result, v_bad_base_qty;
+
+    IF p_dry_run THEN
+        v_elapsed_ms := EXTRACT(EPOCH FROM (clock_timestamp() - v_started_at))::int * 1000;
+        RETURN jsonb_build_object(
+            'mode',              'dry_run',
+            'tenant_scope',      COALESCE(p_tenant_id::text, 'all'),
+            'started_at',        v_started_at,
+            'elapsed_ms',        v_elapsed_ms,
+            'total_scope',       v_total_scope,
+            'would_change',      v_would_change,
+            'unchanged',         v_unchanged,
+            'null_result',       v_null_result,
+            'bad_base_quantity', v_bad_base_qty,
+            'sample',            COALESCE(v_sample, '[]'::jsonb),
+            'note',              'Re-run with p_dry_run := FALSE to apply.'
+        );
+    END IF;
+
+    IF v_would_change > v_safety_max THEN
+        RAISE EXCEPTION
+            'SAFETY THRESHOLD: would_change=% > max=%. Manuel review gerekli.',
+            v_would_change, v_safety_max;
+    END IF;
+
+    -- BEFORE snapshot
+    SELECT
+        count(*),
+        COALESCE(sum(cost), 0),
+        md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_ps_count_before, v_ps_sum_before, v_ps_cs_before
+      FROM public.product_sales
+     WHERE (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    SELECT md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_rm_cs_before
+      FROM public.raw_materials
+     WHERE is_deleted = false
+       AND (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    SELECT md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_prod_cs_before
+      FROM public.products
+     WHERE is_deleted = false
+       AND (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    -- UPDATE — dogal cascade
+    WITH calc AS (
+        SELECT
+            pi.id,
+            (
+                CASE
+                    WHEN pi.line_total IS NOT NULL AND pi.line_total >= 0
+                        THEN pi.line_total
+                    WHEN pi.unit_cost IS NOT NULL AND pi.unit_cost >= 0
+                        THEN pi.quantity * pi.unit_cost
+                             * (1 - COALESCE(pi.discount_rate, 0) / 100.0)
+                    ELSE NULL
+                END
+                * (1 + COALESCE(pi.vat_rate, 0) / 100.0)
+                / NULLIF(pi.base_quantity, 0)
+            ) AS new_value
+        FROM public.purchase_items pi
+        WHERE pi.is_deleted = false
+          AND pi.base_quantity IS NOT NULL
+          AND pi.base_quantity > 0
+          AND (p_tenant_id IS NULL OR pi.tenant_id = p_tenant_id)
+    )
+    UPDATE public.purchase_items pi
+       SET base_unit_cost = calc.new_value
+      FROM calc
+     WHERE pi.id = calc.id
+       AND calc.new_value IS NOT NULL
+       AND pi.base_unit_cost IS DISTINCT FROM calc.new_value;
+
+    GET DIAGNOSTICS v_updated_pi = ROW_COUNT;
+
+    -- AFTER snapshot
+    SELECT
+        count(*),
+        COALESCE(sum(cost), 0),
+        md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_ps_count_after, v_ps_sum_after, v_ps_cs_after
+      FROM public.product_sales
+     WHERE (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    SELECT md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_rm_cs_after
+      FROM public.raw_materials
+     WHERE is_deleted = false
+       AND (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    SELECT md5(coalesce(string_agg(id::text || ':' || cost::text, '|' ORDER BY id), ''))
+      INTO v_prod_cs_after
+      FROM public.products
+     WHERE is_deleted = false
+       AND (p_tenant_id IS NULL OR tenant_id = p_tenant_id);
+
+    -- IMMUTABILITY CHECK — uc katman
+    IF v_ps_count_after <> v_ps_count_before THEN
+        RAISE EXCEPTION
+            'KRITIK IMMUTABILITY IHLALI: product_sales count degisti (before=%, after=%)',
+            v_ps_count_before, v_ps_count_after;
+    END IF;
+    IF v_ps_sum_after IS DISTINCT FROM v_ps_sum_before THEN
+        RAISE EXCEPTION
+            'KRITIK IMMUTABILITY IHLALI: product_sales SUM(cost) degisti (before=%, after=%)',
+            v_ps_sum_before, v_ps_sum_after;
+    END IF;
+    IF v_ps_cs_after <> v_ps_cs_before THEN
+        RAISE EXCEPTION
+            'KRITIK IMMUTABILITY IHLALI: product_sales ordered MD5 degisti';
+    END IF;
+
+    v_rm_changed   := CASE WHEN v_rm_cs_before   <> v_rm_cs_after   THEN 1 ELSE 0 END;
+    v_prod_changed := CASE WHEN v_prod_cs_before <> v_prod_cs_after THEN 1 ELSE 0 END;
+
+    v_elapsed_ms := EXTRACT(EPOCH FROM (clock_timestamp() - v_started_at))::int * 1000;
+
+    RETURN jsonb_build_object(
+        'mode',                       'live',
+        'tenant_scope',               COALESCE(p_tenant_id::text, 'all'),
+        'started_at',                 v_started_at,
+        'elapsed_ms',                 v_elapsed_ms,
+        'total_scope',                v_total_scope,
+        'would_change',               v_would_change,
+        'bad_base_quantity',          v_bad_base_qty,
+        'updated_purchase_items',     v_updated_pi,
+        'raw_materials_cs_changed',   v_rm_changed,
+        'products_cs_changed',        v_prod_changed,
+        'product_sales_immutable',    TRUE,
+        'product_sales_count',        v_ps_count_after,
+        'product_sales_sum',          v_ps_sum_after,
+        'sample',                     COALESCE(v_sample, '[]'::jsonb)
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.rebackfill_purchase_items_base_cost(UUID, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rebackfill_purchase_items_base_cost(UUID, BOOLEAN) FROM anon;
+REVOKE ALL ON FUNCTION public.rebackfill_purchase_items_base_cost(UUID, BOOLEAN) FROM authenticated;
+
+
+-- ============================================================
+-- ============================================================
+-- SECTION X — CANONICAL COMMENTS (050)
+--   docs/FINANCE.md v1.0 semantic freeze.
+--   19 COMMENT ON COLUMN + 9 COMMENT ON FUNCTION (8 finance + 1 maintenance).
+--   Idempotent (PG COMMENT overwrite-safe).
+-- ============================================================
+-- ============================================================
+
+-- X.1 — COMMENT ON COLUMN (canonical column semantics)
+COMMENT ON COLUMN public.sales.total IS
+    'KDV DAHIL gross satis tutari (TRY). Invariant: cash+card=total (UI hazirlaninca enforce edilecek).';
+COMMENT ON COLUMN public.sales.cash IS
+    'KDV DAHIL nakit tahsilat.';
+COMMENT ON COLUMN public.sales.card IS
+    'KDV DAHIL kart tahsilat.';
+
+COMMENT ON COLUMN public.product_sales.unit_price IS
+    'KDV DAHIL satir birim satis fiyati.';
+COMMENT ON COLUMN public.product_sales.total IS
+    'KDV DAHIL satir toplami (quantity * unit_price).';
+COMMENT ON COLUMN public.product_sales.cost IS
+    'KDV DAHIL satis ani IMMUTABLE maliyet snapshot (FAZ 1.1). '
+    'Bir kez yazildiktan sonra hicbir trigger/RPC/restore update etmez.';
+
+COMMENT ON COLUMN public.expenses.amount IS
+    'KDV DAHIL gider tutari (kasadan cikan para). '
+    'Vergi disi (kira gibi) giderler de ayni kolonda.';
+
+COMMENT ON COLUMN public.purchases.total_price IS
+    'KDV HARIC alis tutari (legacy Akis A; faturada yazan). '
+    'Deprecated: yeni faturalar purchase_items uzerinden gelmeli.';
+COMMENT ON COLUMN public.purchases.net_total IS
+    'KDV DAHIL toplam = total_price * (1 + vat_rate/100).';
+COMMENT ON COLUMN public.purchases.unit_cost IS
+    'KDV DAHIL birim maliyet = net_total / quantity. products.cost icin source.';
+COMMENT ON COLUMN public.purchases.vat_rate IS
+    'KDV orani (%). 0-100.';
+
+COMMENT ON COLUMN public.purchase_items.unit_cost IS
+    'KDV HARIC alis birim fiyati (faturada yazan).';
+COMMENT ON COLUMN public.purchase_items.line_total IS
+    'KDV HARIC satir toplami (iskonto sonrasi, vergi oncesi). '
+    'Formul: quantity * unit_cost * (1 - discount_rate/100).';
+COMMENT ON COLUMN public.purchase_items.vat_rate IS
+    'Satir KDV orani (%). Default 20. 0-100.';
+COMMENT ON COLUMN public.purchase_items.discount_rate IS
+    'Satir iskonto orani (%). line_total ve base_unit_cost hesabina dahil. 0-100.';
+COMMENT ON COLUMN public.purchase_items.base_unit_cost IS
+    'KDV DAHIL base_unit basina maliyet. '
+    'trg_fn_purchase_items_fill_base tarafindan yazilir (FAZ 1.4 / 051 VAT-aware). '
+    'Formul: COALESCE(line_total, quantity*unit_cost*(1-discount/100)) '
+    '* (1 + vat/100) / base_quantity.';
+
+COMMENT ON COLUMN public.raw_materials.cost IS
+    'KDV DAHIL son alis maliyeti (base_unit basina). '
+    'Trigger zinciri ile guncellenir (calculate_raw_material_wac).';
+
+COMMENT ON COLUMN public.products.price IS
+    'KDV DAHIL menu satis fiyati.';
+COMMENT ON COLUMN public.products.cost IS
+    'KDV DAHIL urun maliyeti. Recipe motoru (calculate_product_cost) veya '
+    'legacy create_purchase_and_update_product_cost RPC yazar. Iki yol da KDV DAHIL.';
+
+-- X.2 — COMMENT ON FUNCTION (compute engine semantics)
+COMMENT ON FUNCTION public.calculate_product_cost(UUID) IS
+    'Returns KDV DAHIL recipe cost. Formul: SUM(product_recipes.quantity * '
+    'raw_materials.cost) WHERE both NOT is_deleted. raw_materials.cost zaten '
+    'KDV DAHIL (FAZ 1.4 sonrasi). Canonical finance semantics: docs/FINANCE.md.';
+
+COMMENT ON FUNCTION public.calculate_raw_material_wac(UUID) IS
+    'Returns KDV DAHIL last purchase price (base_unit basina). '
+    'Despite "wac" name, this is LAST PRICE model (035). Reads from '
+    'purchase_items.base_unit_cost ORDER BY created_at DESC. '
+    'base_unit_cost trigger tarafindan KDV DAHIL yazilir (FAZ 1.4 sonrasi).';
+
+COMMENT ON FUNCTION public.sync_product_cost(UUID) IS
+    'Updates products.cost = calculate_product_cost(product_id) only if '
+    'product has at least one active recipe. Recipe yoksa products.cost '
+    'manuel kalir (UI ya da legacy purchase RPC tarafindan yazilir). '
+    'Canonical: KDV DAHIL.';
+
+COMMENT ON FUNCTION public.create_purchase_and_update_product_cost(UUID, NUMERIC, NUMERIC, NUMERIC, TEXT) IS
+    'LEGACY Akis A purchase RPC. p_total KDV HARIC, p_vat oran. '
+    'Hesap: net_total = p_total * (1 + p_vat/100), unit_cost = net_total/qty. '
+    'Sonuc KDV DAHIL unit_cost products.cost icin direkt yazilir. '
+    'DEPRECATED: yeni faturalar purchase_items (Akis B) uzerinden. '
+    'FAZ 2 ile kaldirilacak.';
+
+COMMENT ON FUNCTION public.create_sales_atomic(UUID, JSONB) IS
+    'Canonical sales write RPC. SECURITY DEFINER. Tenant resolve auth.uid. '
+    'product_sales.cost server-side products.cost snapshot (FAZ 1.1 — '
+    'immutable). Idempotency: composite UNIQUE (tenant_id, idempotency_key). '
+    'Canonical finance: KDV DAHIL.';
+
+COMMENT ON FUNCTION public.insert_expense(DATE, NUMERIC, UUID, TEXT, TEXT, TEXT) IS
+    'Canonical expense write RPC. SECURITY DEFINER. Tenant resolve auth.uid. '
+    'p_amount KDV DAHIL gross tutar. ON CONFLICT (tenant_id, idempotency_key) '
+    'DO NOTHING. Canonical finance: KDV DAHIL.';
+
+COMMENT ON FUNCTION public.get_dashboard_analytics(DATE, DATE) IS
+    'Dashboard aggregate RPC. profit = SUM(sales.total) - SUM(product_sales.cost) '
+    '- SUM(expenses.amount). Uc bilesen de KDV DAHIL gross. '
+    'Returned profit = gross margin (vergi-oncesi muhasebe karina denk DEGIL).';
+
+COMMENT ON FUNCTION public.get_sales_paginated(DATE, DATE, INT, INT) IS
+    'Paginated sales read RPC. Returned cost = SUM(product_sales.cost) — '
+    'satis ani KDV DAHIL snapshot. profit = s.total - cost (gross margin).';
+
+COMMENT ON FUNCTION public.trg_fn_purchase_items_fill_base() IS
+    'BEFORE INSERT/UPDATE on purchase_items. '
+    'Yazar: base_quantity (unit conversion) + base_unit_cost (KDV DAHIL, iskonto sonrasi). '
+    'Formul: v_net = COALESCE(line_total, quantity*unit_cost*(1-discount/100)); '
+    'base_unit_cost = v_net * (1+vat/100) / base_quantity. '
+    'Canonical finance: docs/FINANCE.md kural 11+12 (FAZ 1.4 / 051).';
+
+COMMENT ON FUNCTION public.rebackfill_purchase_items_base_cost(UUID, BOOLEAN) IS
+    'ADMIN MAINTENANCE one-shot rebackfill of purchase_items.base_unit_cost '
+    'using canonical FAZ 1.4 formula (docs/FINANCE.md kural 11+12). '
+    'Tenant scope: p_tenant_id NULL = all tenants, dolu = sadece o tenant. '
+    'p_dry_run=TRUE (default): analysis only. '
+    'p_dry_run=FALSE: UPDATE + natural cascade (raw_materials, products). '
+    'LIVE safety: would_change > 50000 -> RAISE. '
+    'product_sales.cost IMMUTABLE — count + SUM + ordered MD5 ile dogrulanir. '
+    'Idempotent (WHERE old IS DISTINCT FROM new).';
 
 
 -- ============================================================

@@ -7,8 +7,21 @@ window.PurchasesService = {
 
     /* ============================================================
        CREATE PURCHASE
+
+       idempotency_key:
+         - OPSIYONEL parametre, ama UI flow'unda HER ZAMAN gönderilir.
+         - views/products-view.js modal acilisinda crypto.randomUUID()
+           uretir; bu replay/session token'idir (CONTENT HASH DEGIL):
+             - Ayni modal'da cift tiklama / network retry
+               -> ayni key -> server duplicate skip (idempotent).
+             - Modal kapatilip yeniden acilirsa yeni UUID -> gercek
+               2. alis olarak gecer.
+         - Caller key gondermezse DB tarafi
+           (create_purchase_and_update_product_cost) server fallback ile
+           clock_timestamp + auth.uid tabanli unique key uretir; bu
+           sadece bir guvenlik agidir, replay korumasi saglamaz.
        ============================================================ */
-    async createPurchase({ product_id, quantity, total_price, vat_rate, idempotency_key }) {
+    async createPurchase({ product_id, quantity, total_price, vat_rate, idempotency_key } = {}) {
 
         if (!product_id || !quantity || !total_price) {
             throw new Error('Eksik veri');

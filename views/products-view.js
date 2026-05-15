@@ -2265,6 +2265,12 @@ window.ProductsView = {
         var btnClose = document.getElementById('purchaseClose');
 
         this._on(btnOpen, 'click', async function () {
+            // Replay/session protection: her modal acilisi icin yeni UUID.
+            // Bu bir CONTENT HASH degildir — UI seviyesinde double-click
+            // ve network retry'a karsi koruma. Server fallback
+            // (create_purchase_and_update_product_cost icindeki
+            // clock_timestamp tabanli key) yalnizca guvenlik agi; gercek
+            // replay protection burada uretilen UUID ile saglanir.
             self.currentPurchaseKey = crypto.randomUUID();
             modal.style.display = 'flex';
 
@@ -2364,6 +2370,7 @@ window.ProductsView = {
             btnSave.textContent = 'Kaydediliyor...';
 
             try {
+                // currentPurchaseKey: per-modal UUID; replay/double-click guard.
                 await window.PurchasesService.createPurchase({
                     product_id: productSelect.value,
                     quantity: qty,

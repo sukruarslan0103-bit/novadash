@@ -188,23 +188,40 @@ window.ExpensesService = (function () {
     }
 
     async function create(expense) {
-        const payload = {
-            date: expense.date,
-            amount: Number(expense.amount || 0),
-            description: expense.description || '',
-            category_id: expense.category_id || null,
-            category_name: expense.category_name || null
-        };
+        // 048 + 049: insert_expense RPC canonical write path.
+        // - tenant_id DB-side (auth.uid -> users.tenant_id)
+        // - idempotency_key NULL gonderilir, server fallback hash uretir
+        //   (md5 tenant|date|amount|category_id|category_name|description)
+        // - ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+        // - duplicate ise hard error YOK; {duplicate:true, message} doner
+        const client = window.SupabaseService.getClient();
+        if (!client || typeof client.rpc !== 'function') {
+            throw new Error('Supabase RPC client yok');
+        }
 
         clearCache();
 
-        const res = await window.SupabaseService.insert('expenses', payload);
+        const { data, error } = await client.rpc('insert_expense', {
+            p_date:            expense.date,
+            p_amount:          Number(expense.amount || 0),
+            p_category_id:    (expense.category_id   || null),
+            p_category_name:  (expense.category_name || null),
+            p_description:    (expense.description   || ''),
+            p_idempotency_key: null
+        });
 
-        if (res.error) {
-            throw new Error(res.error.message || 'Gider kaydı oluşturulamadı');
+        if (error) {
+            throw new Error(error.message || 'Gider kaydı oluşturulamadı');
         }
 
-        return res;
+        // RPC JSONB shape: { success, id, duplicate, idempotency_key, message? }
+        const result = data || {};
+        return {
+            data: result,
+            error: null,
+            duplicate: !!result.duplicate,
+            message: result.message || null
+        };
     }
 
     async function update(id, updates) {

@@ -163,7 +163,7 @@ BEGIN
     RAISE NOTICE '[053] POST-VALIDATION: starting...';
 
     -- 1) RLS enabled mi? FORCE kapali mi?
-    SELECT rowsecurity, relforcerowsecurity
+    SELECT c.relrowsecurity, c.relforcerowsecurity
       INTO v_rls_after, v_force_rls
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace

@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS sales (
     created_by      UUID REFERENCES users(id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT sales_idempotency_unique UNIQUE (idempotency_key)
+    CONSTRAINT sales_idempotency_unique UNIQUE (tenant_id, idempotency_key)  -- 048 composite
 );
 
 -- ------------------------------------------------------------
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     created_by       UUID REFERENCES users(id),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT expenses_idempotency_unique UNIQUE (idempotency_key)
+    CONSTRAINT expenses_idempotency_unique UNIQUE (tenant_id, idempotency_key)  -- 048 composite
 );
 
 -- ------------------------------------------------------------
@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS purchases (
     idempotency_key TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT purchases_idempotency_unique UNIQUE (idempotency_key)
+    CONSTRAINT purchases_idempotency_unique UNIQUE (tenant_id, idempotency_key)  -- 048 composite
 );
 
 -- ------------------------------------------------------------
@@ -867,7 +867,10 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.6 — PURCHASE ATOMIC (008)
+-- D.6 — PURCHASE ATOMIC (008 + 048 tenant-scoped composite)
+--   048: SET search_path = public, server hash fallback (clock_timestamp +
+--   auth.uid), ON CONFLICT (tenant_id, idempotency_key) DO NOTHING,
+--   is_active = true user check.
 -- ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION create_purchase_and_update_product_cost(
@@ -880,43 +883,77 @@ CREATE OR REPLACE FUNCTION create_purchase_and_update_product_cost(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
     v_auth_uid    UUID;
     v_tenant_id   UUID;
+    v_idem_key    TEXT;
+    v_existing    UUID;
     v_net_total   NUMERIC;
     v_unit_cost   NUMERIC;
     v_purchase_id UUID;
 BEGIN
     v_auth_uid := auth.uid();
     IF v_auth_uid IS NULL THEN
-        RAISE EXCEPTION 'Unauthorized';
+        RAISE EXCEPTION 'Unauthorized' USING ERRCODE = '42501';
     END IF;
 
-    SELECT tenant_id INTO v_tenant_id FROM users WHERE id = v_auth_uid;
+    SELECT u.tenant_id INTO v_tenant_id
+      FROM public.users u
+     WHERE u.id = v_auth_uid
+       AND u.is_active = true;
+
     IF v_tenant_id IS NULL THEN
-        RAISE EXCEPTION 'Tenant not found';
+        RAISE EXCEPTION 'Unauthorized: tenant not found or user disabled'
+            USING ERRCODE = '42501';
     END IF;
 
     PERFORM check_rate_limit(v_tenant_id, v_auth_uid, 'purchase', interval '2 seconds');
 
     IF p_product_id IS NULL THEN RAISE EXCEPTION 'product_id required'; END IF;
-    IF p_quantity IS NULL OR p_quantity <= 0 THEN RAISE EXCEPTION 'Invalid quantity'; END IF;
-    IF p_total IS NULL OR p_total <= 0 THEN RAISE EXCEPTION 'Invalid total'; END IF;
+    IF p_quantity   IS NULL OR p_quantity <= 0 THEN RAISE EXCEPTION 'Invalid quantity'; END IF;
+    IF p_total      IS NULL OR p_total    <= 0 THEN RAISE EXCEPTION 'Invalid total';    END IF;
 
     IF NOT EXISTS (
-        SELECT 1 FROM products WHERE id = p_product_id AND tenant_id = v_tenant_id
+        SELECT 1 FROM public.products
+         WHERE id = p_product_id
+           AND tenant_id = v_tenant_id
     ) THEN
-        RAISE EXCEPTION 'Product not found';
+        RAISE EXCEPTION 'Product not found' USING ERRCODE = '42501';
     END IF;
 
+    -- 048: server-side idempotency_key fallback.
+    -- clock_timestamp + auth.uid -> her cagri UNIQUE key uretir.
+    -- "Ayni gun ayni urun ayni miktar" gercek ikinci alis kollaps olmaz.
+    -- Replay protection isteyen client kendi deterministic key'ini gondermelidir.
+    v_idem_key := COALESCE(
+        p_idempotency_key,
+        md5(
+            v_tenant_id::text                                   || '|' ||
+            p_product_id::text                                  || '|' ||
+            COALESCE(p_quantity, 0)::text                       || '|' ||
+            COALESCE(p_total, 0)::text                          || '|' ||
+            COALESCE(p_vat, 0)::text                            || '|' ||
+            clock_timestamp()::text                             || '|' ||
+            v_auth_uid::text
+        )
+    );
+
+    -- Client key gonderdiyse explicit duplicate check (replay safety).
     IF p_idempotency_key IS NOT NULL THEN
-        IF EXISTS (
-            SELECT 1 FROM purchases
-            WHERE idempotency_key = p_idempotency_key AND tenant_id = v_tenant_id
-        ) THEN
+        SELECT id INTO v_existing
+          FROM public.purchases
+         WHERE tenant_id       = v_tenant_id
+           AND idempotency_key = p_idempotency_key
+         LIMIT 1;
+
+        IF v_existing IS NOT NULL THEN
             RETURN jsonb_build_object(
-                'success', true, 'duplicate', true, 'message', 'Already recorded'
+                'success', true, 'duplicate', true,
+                'purchase_id', v_existing,
+                'idempotency_key', p_idempotency_key,
+                'message', 'Already recorded'
             );
         END IF;
     END IF;
@@ -924,18 +961,36 @@ BEGIN
     v_net_total := p_total + (p_total * COALESCE(p_vat, 0) / 100);
     v_unit_cost := v_net_total / p_quantity;
 
-    INSERT INTO purchases (
+    INSERT INTO public.purchases (
         tenant_id, product_id, quantity, total_price,
         vat_rate, net_total, unit_cost, idempotency_key
     ) VALUES (
         v_tenant_id, p_product_id, p_quantity, p_total,
-        COALESCE(p_vat, 0), v_net_total, v_unit_cost, p_idempotency_key
+        COALESCE(p_vat, 0), v_net_total, v_unit_cost, v_idem_key
     )
+    ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
     RETURNING id INTO v_purchase_id;
 
-    UPDATE products
-    SET cost = v_unit_cost, updated_at = now()
-    WHERE id = p_product_id AND tenant_id = v_tenant_id;
+    -- ON CONFLICT match (clock_timestamp ile cok dusuk olasilik): existing dön
+    IF v_purchase_id IS NULL THEN
+        SELECT id INTO v_existing
+          FROM public.purchases
+         WHERE tenant_id       = v_tenant_id
+           AND idempotency_key = v_idem_key
+         LIMIT 1;
+
+        RETURN jsonb_build_object(
+            'success', true, 'duplicate', true,
+            'purchase_id', v_existing,
+            'idempotency_key', v_idem_key,
+            'message', 'Already recorded'
+        );
+    END IF;
+
+    UPDATE public.products
+       SET cost = v_unit_cost, updated_at = now()
+     WHERE id = p_product_id
+       AND tenant_id = v_tenant_id;
 
     PERFORM write_system_log(
         v_tenant_id, v_auth_uid, 'purchase', 'success',
@@ -948,7 +1003,10 @@ BEGIN
 
     RETURN jsonb_build_object(
         'success', true, 'duplicate', false,
-        'purchase_id', v_purchase_id, 'unit_cost', v_unit_cost, 'net_total', v_net_total
+        'purchase_id', v_purchase_id,
+        'unit_cost', v_unit_cost,
+        'net_total', v_net_total,
+        'idempotency_key', v_idem_key
     );
 
 EXCEPTION WHEN OTHERS THEN
@@ -1335,23 +1393,30 @@ $$;
 
 
 -- ------------------------------------------------------------
--- D.8 — EXPENSE WRITE RPCs (045 + insert_expense + 050)
+-- D.8 — EXPENSE WRITE RPCs (045 + insert_expense + 048 + 050)
 --
--- insert_expense:
+-- insert_expense (048 sonrasi canonical):
 --   tenant_id server-side resolve (auth.uid -> users.tenant_id)
---   Client tenant spoofing yapamaz.
---   ON CONFLICT (idempotency_key) -> amount update (re-submit safe)
+--   Client tenant spoofing yapamaz. is_active = true user check.
+--   ON CONFLICT (tenant_id, idempotency_key) DO NOTHING.
+--   DO UPDATE SET amount KALDIRILDI (cross-tenant amount manipulation
+--   yuzeyi kapali). Amount degisikligi icin update_expense ayri RPC.
+--   Server hash fallback (md5 tenant|date|amount|category|description).
+--   RETURNS JSONB: {success, id, duplicate, idempotency_key, message}.
 -- ------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION insert_expense(
+-- 048: return type degisimi (UUID -> JSONB) icin DROP zorunlu
+DROP FUNCTION IF EXISTS public.insert_expense(DATE, NUMERIC, UUID, TEXT, TEXT, TEXT);
+
+CREATE OR REPLACE FUNCTION public.insert_expense(
     p_date            DATE,
     p_amount          NUMERIC,
     p_category_id     UUID,
     p_category_name   TEXT,
     p_description     TEXT,
-    p_idempotency_key TEXT
+    p_idempotency_key TEXT DEFAULT NULL
 )
-RETURNS UUID
+RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -1359,23 +1424,46 @@ AS $$
 DECLARE
     v_auth_uid  UUID;
     v_tenant_id UUID;
-    v_id        UUID;
+    v_idem_key  TEXT;
+    v_new_id    UUID;
+    v_existing  UUID;
 BEGIN
     v_auth_uid := auth.uid();
     IF v_auth_uid IS NULL THEN
-        RAISE EXCEPTION 'Unauthorized' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'Unauthorized: no authenticated user'
+            USING ERRCODE = '42501';
     END IF;
 
-    SELECT tenant_id INTO v_tenant_id FROM users WHERE id = v_auth_uid;
+    SELECT u.tenant_id INTO v_tenant_id
+      FROM public.users u
+     WHERE u.id = v_auth_uid
+       AND u.is_active = true;
+
     IF v_tenant_id IS NULL THEN
-        RAISE EXCEPTION 'Tenant not found' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'Unauthorized: tenant not found or user disabled'
+            USING ERRCODE = '42501';
     END IF;
 
     IF p_date IS NULL THEN
-        RAISE EXCEPTION 'date zorunlu';
+        RAISE EXCEPTION 'date is required';
     END IF;
 
-    INSERT INTO expenses (
+    -- 048: server-side idempotency_key fallback (formul deterministik;
+    -- sales pattern ile simetrik: tenant|date|amount|category|description).
+    v_idem_key := COALESCE(
+        p_idempotency_key,
+        md5(
+            v_tenant_id::text                                       || '|' ||
+            p_date::text                                            || '|' ||
+            COALESCE(p_amount, 0)::text                             || '|' ||
+            COALESCE(p_category_id::text, '')                       || '|' ||
+            COALESCE(p_category_name, '')                           || '|' ||
+            COALESCE(p_description, '')
+        )
+    );
+
+    -- 048: ON CONFLICT (tenant_id, idempotency_key) DO NOTHING.
+    INSERT INTO public.expenses (
         tenant_id, date, amount, category_id, category_name,
         description, idempotency_key, created_by
     ) VALUES (
@@ -1385,14 +1473,35 @@ BEGIN
         p_category_id,
         p_category_name,
         p_description,
-        p_idempotency_key,
+        v_idem_key,
         v_auth_uid
     )
-    ON CONFLICT (idempotency_key) DO UPDATE
-        SET amount = EXCLUDED.amount
-    RETURNING id INTO v_id;
+    ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+    RETURNING id INTO v_new_id;
 
-    RETURN v_id;
+    IF v_new_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'success',         true,
+            'id',              v_new_id,
+            'duplicate',       false,
+            'idempotency_key', v_idem_key
+        );
+    END IF;
+
+    -- INSERT cakisti -> ayni tenant+key satirini bul ve duplicate dön.
+    SELECT id INTO v_existing
+      FROM public.expenses
+     WHERE tenant_id = v_tenant_id
+       AND idempotency_key = v_idem_key
+     LIMIT 1;
+
+    RETURN jsonb_build_object(
+        'success',         true,
+        'id',              v_existing,
+        'duplicate',       true,
+        'idempotency_key', v_idem_key,
+        'message',         'Ayni gider zaten kayitli'
+    );
 END;
 $$;
 
@@ -2867,7 +2976,7 @@ END;
 $$;
 
 
--- H.8 — restore_full_backup (043 — data wrapper path)
+-- H.8 — restore_full_backup (043 + 048 tenant-scoped composite ON CONFLICT)
 --   v_data := COALESCE(backup->'data', backup)  ← KRITIK
 CREATE OR REPLACE FUNCTION restore_full_backup(backup JSONB, tenant UUID)
 RETURNS JSONB
@@ -3074,7 +3183,7 @@ BEGIN
                 COALESCE((v_sale->>'card')::numeric, 0),
                 v_backup_notes, false, v_idem_key
             )
-            ON CONFLICT (idempotency_key) DO NOTHING
+            ON CONFLICT (tenant_id, idempotency_key) DO NOTHING   -- 048: composite
             RETURNING id INTO v_new_sale_id;
 
             IF v_new_sale_id IS NULL THEN

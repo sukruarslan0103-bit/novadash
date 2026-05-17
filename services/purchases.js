@@ -52,6 +52,10 @@ window.PurchasesService = {
         });
 
         if (error) {
+            // Auth recovery: strict pattern matching; false-positive logout YASAK.
+            if (window.SupabaseService && window.SupabaseService.detectAuthError && window.SupabaseService.detectAuthError(error)) {
+                window.SupabaseService.forceLogout('purchases.createPurchase.rpc_auth_error');
+            }
             window.SupabaseService.logEvent('purchase', 'fail', error.message || 'RPC error', {
                 product_id: product_id, quantity: quantity
             });

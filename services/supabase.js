@@ -512,6 +512,104 @@ window.SupabaseService = (function () {
     }
 
     /* ============================================================
+       AUTH RECOVERY HARDENING (frontend-only)
+
+       Amac: token gecersizlestiginde (manuel clear, cross-tab signOut,
+       expire+refresh fail, admin revoke) frontend stale state'i guvenle
+       toparlamak.
+
+       Strict pattern matching:
+         - false-positive logout YASAK
+         - validation / RLS / rate-limit / network hatasi tetiklemez
+    ============================================================ */
+
+    // Auth-only error pattern detection
+    function detectAuthError(error) {
+        if (!error) return false;
+
+        var status = String(error.status || error.code || '');
+        if (status === '401' || status === 'PGRST301') return true;
+
+        var msg = String(error.message || error.error_description || error.error || '');
+        if (!msg) return false;
+
+        if (msg.indexOf('Unauthorized: no authenticated user')          !== -1) return true;
+        if (msg.indexOf('Unauthorized: tenant not found or user disabled') !== -1) return true;
+        if (msg.indexOf('JWT expired')                                   !== -1) return true;
+        if (msg.indexOf('JWT invalid')                                   !== -1) return true;
+        if (msg.indexOf('Auth session missing')                          !== -1) return true;
+        if (msg.indexOf('invalid_grant')                                 !== -1) return true;
+
+        return false;
+    }
+
+    // Re-entrancy guard (5 saniye lock)
+    var _forceLogoutInProgress = false;
+
+    function forceLogout(reason) {
+        if (_forceLogoutInProgress) return;
+        _forceLogoutInProgress = true;
+
+        try {
+            if (window.__DEBUG__) console.warn('[auth] forceLogout reason=', reason);
+
+            // Canonical cleanup (state + cache invalidate + #login redirect)
+            if (window.AppBootstrap && typeof window.AppBootstrap.redirectToLogin === 'function') {
+                window.AppBootstrap.redirectToLogin();
+            }
+
+            // Defensive ViewCache clear (redirectToLogin coverage'i pekistir)
+            if (window.ViewCache && typeof window.ViewCache.clear === 'function') {
+                try { window.ViewCache.clear(); } catch (e) { /* noop */ }
+            }
+
+            // Supabase JS in-memory session temizligi (fire-and-forget)
+            if (client) {
+                try {
+                    client.auth.signOut().catch(function () { /* silent */ });
+                } catch (e) { /* silent */ }
+            }
+
+            // Kullaniciya bilgi
+            try {
+                if (window.Toast && typeof window.Toast.show === 'function') {
+                    window.Toast.show('Oturumunuz sona erdi, lütfen tekrar giriş yapın', 'warning');
+                } else if (typeof window.alert === 'function') {
+                    // Alert intrusive; sadece Toast yoksa
+                    setTimeout(function () {
+                        window.alert('Oturumunuz sona erdi, lütfen tekrar giriş yapın');
+                    }, 100);
+                }
+            } catch (e) { /* noop */ }
+        } finally {
+            // 5 saniye sonra tekrar tetiklenebilir hale gel
+            setTimeout(function () {
+                _forceLogoutInProgress = false;
+            }, 5000);
+        }
+    }
+
+    // Cross-tab + manual localStorage clear secondary defense.
+    // Storage event AYNI tab'da fire ETMEZ — manuel clear icin RPC error
+    // detection (sales/expenses/purchases service'lerinde) primary defense.
+    function _bindStorageAuthListener() {
+        if (typeof window === 'undefined' || !window.addEventListener) return;
+        try {
+            window.addEventListener('storage', function (e) {
+                if (!e || !e.key) return;
+                // Supabase auth token key formati: sb-<project-ref>-auth-token
+                if (e.key.indexOf('sb-') !== 0 || e.key.indexOf('auth-token') === -1) return;
+                // Sadece silme/bosaltma case'i; cross-tab signin (yeni token) tetiklemez
+                if (e.newValue !== null && e.newValue !== '') return;
+                if (window.STATE && window.STATE.authenticated) {
+                    forceLogout('storage_event_token_removed');
+                }
+            });
+        } catch (e) { /* noop */ }
+    }
+    _bindStorageAuthListener();
+
+    /* ============================================================
        SYSTEM LOG — kritik hatalari DB'ye yaz
        Asla ana islemi bloklama, fire-and-forget
     ============================================================ */
@@ -542,7 +640,9 @@ window.SupabaseService = (function () {
         softDelete,
         signInWithEmail,
         signOut,
-        logEvent
+        logEvent,
+        detectAuthError,
+        forceLogout
     };
 
 })();

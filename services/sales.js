@@ -265,6 +265,10 @@ window.SalesService = (function() {
             });
 
             if (error) {
+                // Auth recovery: strict pattern matching; false-positive logout YASAK.
+                if (window.SupabaseService && window.SupabaseService.detectAuthError && window.SupabaseService.detectAuthError(error)) {
+                    window.SupabaseService.forceLogout('sales.create.rpc_auth_error');
+                }
                 return { data: null, error: error.message || error };
             }
 
@@ -284,6 +288,9 @@ window.SalesService = (function() {
 
             return { data: result || null, error: null, duplicate: isDuplicate };
         } catch (err) {
+            if (window.SupabaseService && window.SupabaseService.detectAuthError && window.SupabaseService.detectAuthError(err)) {
+                window.SupabaseService.forceLogout('sales.create.exception_auth_error');
+            }
             return { data: null, error: err?.message || 'Satış oluşturulurken hata oluştu' };
         }
     }

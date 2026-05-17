@@ -211,6 +211,10 @@ window.ExpensesService = (function () {
         });
 
         if (error) {
+            // Auth recovery: strict pattern matching; false-positive logout YASAK.
+            if (window.SupabaseService && window.SupabaseService.detectAuthError && window.SupabaseService.detectAuthError(error)) {
+                window.SupabaseService.forceLogout('expenses.create.rpc_auth_error');
+            }
             throw new Error(error.message || 'Gider kaydı oluşturulamadı');
         }
 

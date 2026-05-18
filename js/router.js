@@ -316,26 +316,34 @@ window.Router = {
         }
 
         if (bootstrapOk && window.STATE && window.STATE.authenticated) {
-            // EXPLICIT NAVIGATION — hashchange race'e bel baglamiyoruz.
+            // TEK-NAVIGATE GARANTISI.
             //
             // Hash override mantigi (safeNavigateToDashboard ile birebir):
-            //   - bos veya '#login'  → '#dashboard' set et
-            //   - gecerli bir route ('#expenses', '#sales', '#products', ...)
-            //     → KORUNUR (deep-link / yer imi davranisi)
+            //   - bos veya '#login'  → '#dashboard' set et (hashchange
+            //                          tetiklenir, Router.navigate listener
+            //                          uzerinden BIR KEZ cagrilir)
+            //   - gecerli bir route ('#expenses', '#sales', ...) → korunur,
+            //                          hashchange fire ETMEZ, Router.navigate
+            //                          manuel cagrilir
             //
-            // Router.navigate() DOGRUDAN cagrilir (hashchange race'inden
-            //   bagimsiz). Hash degismediyse hashchange fire etmez, bizim
-            //   explicit cagrimiz tek navigation tetikleyicisi olur.
-            //   Hash degistiyse hashchange fire eder + bizim cagrimiz —
-            //   navigate idempotent oldugu icin zararsiz (ayni route render).
+            // KRITIK: Double-navigate Chart.js canvas init'ini boz uyor
+            //   (1. render fetch ederken 2. render destroy + re-render
+            //   tetikleyince canvas yarim init kaliyordu — "boşluklar"
+            //   semptomu). Bu yuzden iki dali AYRI tutuyoruz.
             //
-            // Tek-source-of-truth: SIGNED_IN listener artik navigation yapmiyor.
+            // Tek-source-of-truth: SIGNED_IN listener artik navigation
+            // yapmiyor; init() idempotent oldugu icin bootstrap zinciri
+            // de race-free.
             var curHash = window.location.hash || '';
             if (!curHash || curHash === '#login') {
+                // hashchange listener → Router.navigate tetikler. Manuel YAPMA.
                 window.location.hash = '#dashboard';
-            }
-            if (window.Router && typeof window.Router.navigate === 'function') {
-                try { window.Router.navigate(); } catch (e) { /* noop */ }
+            } else {
+                // Deep-link: hash zaten gecerli. hashchange fire etmeyecek;
+                // manuel navigate sart.
+                if (window.Router && typeof window.Router.navigate === 'function') {
+                    try { window.Router.navigate(); } catch (e) { /* noop */ }
+                }
             }
         } else {
             // Bootstrap fail — login formu DOM'da hala duruyor olabilir.

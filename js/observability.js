@@ -57,6 +57,8 @@
             });
 
             // Slow RPC (>500ms) -> DB log (system_logs uzerine)
+            // metadata'ya rpc_name eklendi (system_logs.message kolonuna
+            // bagimli olmayalim diye — view kolon-bagimsiz okuyor).
             if (duration_ms > SLOW_THRESHOLD_MS &&
                 window.SupabaseService &&
                 typeof window.SupabaseService.logEvent === 'function') {
@@ -65,7 +67,11 @@
                         'rpc_slow',
                         success ? 'warn' : 'error',
                         name + ' took ' + duration_ms + 'ms',
-                        { duration_ms: duration_ms, error: error_message || null }
+                        {
+                            rpc_name: name,
+                            duration_ms: duration_ms,
+                            error: error_message || null
+                        }
                     );
                 } catch (e) { /* never block */ }
             }

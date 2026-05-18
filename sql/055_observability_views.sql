@@ -79,15 +79,21 @@ COMMENT ON VIEW v_slow_rpc IS
 -- system_logs.action = 'rpc_slow' kayitlari; client wrapper
 -- (js/observability.js) >500ms RPC'leri log_client_event ile yaziyor.
 -- Client tarafi RTT + serialize + sunucu suresini kapsar.
+--
+-- KOLON-BAGIMSIZ: RPC name + duration + error metadata JSONB'sinden
+-- okunur. system_logs schema varyasyonu (message kolonu yok/var) bu
+-- view'i etkilemez.
 CREATE OR REPLACE VIEW v_client_slow_rpc AS
 SELECT
     created_at,
     tenant_id,
     user_id,
-    message,
+    action,
+    status,
+    metadata->>'rpc_name'                                   AS rpc_name,
     (metadata->>'duration_ms')::int                         AS client_duration_ms,
     metadata->>'error'                                      AS error,
-    status
+    metadata                                                AS metadata_full
 FROM system_logs
 WHERE action    = 'rpc_slow'
   AND created_at > now() - interval '24 hours'

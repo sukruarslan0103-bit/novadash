@@ -64,6 +64,15 @@ window.SupabaseService = (function () {
        INIT
     ============================================================ */
     function init() {
+        // IDEMPOTENT: tek client / tek listener per page lifetime.
+        // Birden fazla init() cagrisi (initApp + bootstrap'in re-entrant
+        // cagrilari + listener'in bootstrap'i) HER SEFERINDE yeni client
+        // yaratiyordu. Bu yeni client localStorage'daki session'i async
+        // restore eder; tamamlanmadan getCurrentUser() cagrilirsa null
+        // doner -> bootstrap fail -> "Oturum hazirlanamadi" hatasi.
+        // Refresh'te tek init() oldugu icin sorun gorunmuyordu.
+        if (client) return;
+
         const url = "https://czbovdurwdjpdxgpobqn.supabase.co";
         const key = "sb_publishable_4SYCpNuY_ftBkWS4Sn-5Qg_cQW2sR9p";
 

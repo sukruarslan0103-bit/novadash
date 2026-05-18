@@ -294,29 +294,50 @@ window.Router = {
             return;
         }
 
-        // 3) SUCCESS — tenant hydrate AWAIT.
+        // 3) SUCCESS — tenant hydrate AWAIT, sonra TEK NOKTADAN navigation.
         //    authenticated bayragini BURADA set etmiyoruz; bootstrap kendi
         //    set ediyor (tenant satiri geldikten sonra). Boylece:
         //      authenticated=true & tenant=null
         //    araligi yok.
         this._cleanupLoginHandlers();
 
+        var bootstrapOk = false;
         try {
             if (window.AppBootstrap && typeof window.AppBootstrap.afterLogin === 'function') {
-                await window.AppBootstrap.afterLogin();
+                bootstrapOk = await window.AppBootstrap.afterLogin();
             } else {
                 // AppBootstrap yoksa fallback (degismez minimum)
                 window.STATE.authenticated = true;
-                window.safeNavigateToDashboard();
+                bootstrapOk = true;
             }
         } catch (e) {
             if (window.__DEBUG__) console.error('[Router] afterLogin failed:', e);
-        } finally {
-            // Login basarisizsa redirectToLogin login ekranini tekrar render eder;
-            // basariliysa dashboard render olur. Buton DOM'da hala duruyorsa reset.
+            bootstrapOk = false;
+        }
+
+        if (bootstrapOk && window.STATE && window.STATE.authenticated) {
+            // EXPLICIT NAVIGATION — hashchange race'e bel baglamiyoruz.
+            //   1) Hash zaten #dashboard degilse set et (gerekiyorsa hashchange
+            //      fire eder, navigate'i o da tetikler — bizim ikinci cagrimiz
+            //      idempotent oldugu icin zararsiz)
+            //   2) Router.navigate'i DOGRUDAN cagir (hashchange race'inden
+            //      bagimsiz). Tek-source-of-truth: SIGNED_IN listener artik
+            //      navigation yapmiyor.
+            if (window.location.hash !== '#dashboard') {
+                window.location.hash = '#dashboard';
+            }
+            if (window.Router && typeof window.Router.navigate === 'function') {
+                try { window.Router.navigate(); } catch (e) { /* noop */ }
+            }
+        } else {
+            // Bootstrap fail — login formu DOM'da hala duruyor olabilir.
+            // Buton'u re-enable, kullaniciya net mesaj ver.
             if (btnEl && document.body.contains(btnEl)) {
                 btnEl.disabled = false;
                 btnEl.textContent = 'Giriş Yap';
+            }
+            if (typeof this.showLoginError === 'function') {
+                this.showLoginError('Oturum hazırlanamadı. Tekrar deneyin.');
             }
         }
     },

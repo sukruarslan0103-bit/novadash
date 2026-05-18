@@ -82,21 +82,25 @@ window.SupabaseService = (function () {
                 invalidateTenantCache();
             }
 
-            // GLOBAL LISTENER — SIGNED_IN
+            // GLOBAL LISTENER — SIGNED_IN / INITIAL_SESSION
             // KRITIK: authenticated bayragini BURADAN set etme.
             // Tek source-of-truth AppBootstrap.bootstrap() — tenant satiri
             // cekilmeden authenticated=true olmamali. bootstrap idempotent;
             // initApp / handleLogin / SIGNED_IN ayni anda tetiklense bile
             // tek bir hydrate calisir.
-            if (event === 'SIGNED_IN' && session) {
+            //
+            // NAVIGATION YAPMA. Bu listener artik sadece state hydrate eder
+            // (cross-tab senaryosu: Tab A'da signin → Tab B'de bootstrap calisir,
+            // STATE guncellenir; ayni tab'da navigation handleLogin'in
+            // sorumlulugu). Eski .then(safeNav) zinciri double-navigation race
+            // yaratiyordu — kaldirildi.
+            //
+            // INITIAL_SESSION fallback: SDK v2.30+ bazen SIGNED_IN yerine
+            // sadece INITIAL_SESSION emit eder. Bootstrap her iki event'te
+            // tetiklenir; idempotent oldugu icin duplicate cagri zararsiz.
+            if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
                 if (window.AppBootstrap && typeof window.AppBootstrap.bootstrap === 'function') {
-                    window.AppBootstrap.bootstrap()
-                        .then(function (ok) {
-                            if (ok && typeof window.safeNavigateToDashboard === 'function') {
-                                window.safeNavigateToDashboard();
-                            }
-                        })
-                        .catch(function () { /* bootstrap kendi redirectToLogin'ini yapiyor */ });
+                    window.AppBootstrap.bootstrap().catch(function () { /* noop */ });
                 }
             }
 

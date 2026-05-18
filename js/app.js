@@ -186,16 +186,10 @@
     }
 
     async function afterLogin() {
-        var success = await bootstrapSupabase();
-
-        if (success) {
-            // safeNavigate: aktif sayfayi (#expenses, #products vs.) override etmez
-            if (typeof window.safeNavigateToDashboard === 'function') {
-                window.safeNavigateToDashboard();
-            } else if (!window.location.hash || window.location.hash === '#login') {
-                window.location.hash = '#dashboard';
-            }
-        }
+        // Sadece bootstrap. Navigation handleLogin'de tek noktadan explicit
+        // yapilir (Router.navigate). Eski safeNavigateToDashboard cagrisi
+        // burada da double-navigation race'in parcasiydi — kaldirildi.
+        return await bootstrapSupabase();
     }
 
     async function logout() {

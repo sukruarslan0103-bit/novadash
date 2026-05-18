@@ -317,13 +317,21 @@ window.Router = {
 
         if (bootstrapOk && window.STATE && window.STATE.authenticated) {
             // EXPLICIT NAVIGATION — hashchange race'e bel baglamiyoruz.
-            //   1) Hash zaten #dashboard degilse set et (gerekiyorsa hashchange
-            //      fire eder, navigate'i o da tetikler — bizim ikinci cagrimiz
-            //      idempotent oldugu icin zararsiz)
-            //   2) Router.navigate'i DOGRUDAN cagir (hashchange race'inden
-            //      bagimsiz). Tek-source-of-truth: SIGNED_IN listener artik
-            //      navigation yapmiyor.
-            if (window.location.hash !== '#dashboard') {
+            //
+            // Hash override mantigi (safeNavigateToDashboard ile birebir):
+            //   - bos veya '#login'  → '#dashboard' set et
+            //   - gecerli bir route ('#expenses', '#sales', '#products', ...)
+            //     → KORUNUR (deep-link / yer imi davranisi)
+            //
+            // Router.navigate() DOGRUDAN cagrilir (hashchange race'inden
+            //   bagimsiz). Hash degismediyse hashchange fire etmez, bizim
+            //   explicit cagrimiz tek navigation tetikleyicisi olur.
+            //   Hash degistiyse hashchange fire eder + bizim cagrimiz —
+            //   navigate idempotent oldugu icin zararsiz (ayni route render).
+            //
+            // Tek-source-of-truth: SIGNED_IN listener artik navigation yapmiyor.
+            var curHash = window.location.hash || '';
+            if (!curHash || curHash === '#login') {
                 window.location.hash = '#dashboard';
             }
             if (window.Router && typeof window.Router.navigate === 'function') {

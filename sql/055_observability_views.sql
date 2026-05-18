@@ -83,13 +83,16 @@ COMMENT ON VIEW v_slow_rpc IS
 -- KOLON-BAGIMSIZ: RPC name + duration + error metadata JSONB'sinden
 -- okunur. system_logs schema varyasyonu (message kolonu yok/var) bu
 -- view'i etkilemez.
+-- MINIMAL kolonlar: production system_logs schema'sinda kesin
+-- var olan alanlar. Status / message / vb. opsiyonel kolonlar
+-- VARSA metadata JSON'una elle ekleyenleri okumamiz lazim.
+-- Iste schema dogrulamasi gerekiyor (information_schema sorgusu).
 CREATE OR REPLACE VIEW v_client_slow_rpc AS
 SELECT
     created_at,
     tenant_id,
     user_id,
     action,
-    status,
     metadata->>'rpc_name'                                   AS rpc_name,
     (metadata->>'duration_ms')::int                         AS client_duration_ms,
     metadata->>'error'                                      AS error,

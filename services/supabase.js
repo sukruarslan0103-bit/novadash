@@ -81,6 +81,37 @@ window.SupabaseService = (function () {
         // Global expose — window.supabase ile direkt erisim (debug/legacy uyumluluk)
         try { window.supabase = client; } catch (e) { /* noop */ }
 
+        // RPC LATENCY WRAPPER (Faz 0 Adim 2)
+        //   Tum client.rpc cagrilari otomatik olculur (rpc_name, duration_ms,
+        //   success/fail, tenant_id). Mevcut hicbir cagri degismez.
+        //   RpcObserver yoksa wrapper kurulmaz — graceful degrade.
+        //   Slow RPC (>500ms) system_logs'a log_client_event ile yazilir.
+        if (window.RpcObserver && typeof client.rpc === 'function') {
+            var _origRpc = client.rpc.bind(client);
+            client.rpc = function (name, params) {
+                var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+                var p;
+                try {
+                    p = _origRpc(name, params);
+                } catch (syncErr) {
+                    // Sync exception (cagri sirasinda) — ozel durum
+                    var dtSync = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
+                    try { window.RpcObserver.record(name, dtSync, false, syncErr && (syncErr.message || String(syncErr))); } catch (e) { /* noop */ }
+                    throw syncErr;
+                }
+                if (p && typeof p.then === 'function') {
+                    p.then(function (res) {
+                        var dt = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
+                        window.RpcObserver.record(name, dt, !(res && res.error), res && res.error && (res.error.message || String(res.error)));
+                    }, function (err) {
+                        var dt = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
+                        window.RpcObserver.record(name, dt, false, err && (err.message || String(err)));
+                    });
+                }
+                return p;
+            };
+        }
+
         // Auth state değiştiğinde tenant cache'i invalidate et
         client.auth.onAuthStateChange(function (event, session) {
             if (window.ViewCache && typeof window.ViewCache.clear === 'function') {

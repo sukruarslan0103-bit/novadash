@@ -79,7 +79,24 @@ window.DashboardView = {
 
         if (cached) {
             self.cachedData = cached;
+
+            // PERF (Faz 2.1): Cache hit + same-sig + DOM stable → full innerHTML
+            // rebuild SKIP. Sadece chart in-place update (zaten no-op olur eger
+            // chart sig'i de aynı). Bu, "ilk render agir, sekme degisip
+            // donunce yine agir" hissinin ana cozumudur.
+            var newSig = self._computeRenderSig(cached);
+            var domStable = container.querySelector('.kpi-grid') !== null;
+
+            if (self._lastRenderedSig === newSig && domStable) {
+                // Tam skip — chart'lar zaten same-sig guard'inda no-op olur
+                self.renderSalesChart(cached);
+                self.renderExpenseChart(cached);
+                self._finishRender();
+                return;
+            }
+
             self.renderDashboard(container, cached);
+            self._lastRenderedSig = newSig;
             self._finishRender();
             return;
         }
@@ -102,6 +119,9 @@ window.DashboardView = {
             }
 
             self.renderDashboard(container, data);
+            // PERF (Faz 2.1): Render signature track — sonraki cache hit'te
+            // same-sig kontrolu icin.
+            self._lastRenderedSig = self._computeRenderSig(data);
 
         } catch (error) {
             console.error('Dashboard render error:', error);
@@ -135,6 +155,31 @@ window.DashboardView = {
                 self.render(self.container, wasForce);
             }
         }
+    },
+
+    // PERF (Faz 2.1): Hafif data signature — critical değerleri "|" join'le
+    // hash et. JSON.stringify pahalıydı; bu O(N) string concat ile cache hit
+    // sırasında full DOM rebuild skip kararı için.
+    // Same-sig + DOM stable ise render() innerHTML'i atlar; chart'lar in-place
+    // update yapar (kendi same-sig guard'larıyla no-op).
+    _computeRenderSig: function (data) {
+        if (!data) return '';
+        var d = data.daily || {};
+        var m = data.monthly || {};
+        var top = (data.topProducts || []).map(function (p) {
+            return (p.name || '') + ':' + (p.profit || 0) + ':' + (p.sales || 0);
+        }).join(',');
+        var ws = (data.weeklySales || []).reduce(function (s, w) {
+            return s + (Number(w.amount) || 0);
+        }, 0);
+        var ec = (data.expenseCategories || []).reduce(function (s, c) {
+            return s + (Number(c.amount) || 0);
+        }, 0);
+        return [
+            d.ciro, d.gider, d.kar, d.trend,
+            m.ciro, m.gider, m.kar, m.trend,
+            top, (data.alerts || []).length, ws, ec, data.healthScore
+        ].join('|');
     },
 
     renderDashboard(container, data) {
@@ -203,7 +248,24 @@ window.DashboardView = {
                 '</div>' +
             '</div>' +
 
-            '<div class="bottom-grid">' +
+            // PERF (Faz 2.1): Bottom-grid ve Nabiz section'lari ayri helper
+            // fonksiyonlara extract edildi (kod organizasyonu + gelecekte
+            // partial update'e hazirlik). Output byte-by-byte AYNI.
+            self._buildBottomGridHtml(data) +
+            self._buildNabizCardHtml(data);
+
+        self.bindGlobalKpiToggle();
+        self.renderSalesChart(data);
+        self.renderExpenseChart(data);
+        self.updateHeaderWidgets(data);
+    },
+
+    // PERF (Faz 2.1): renderDashboard'dan extract — Kritik Uyarilar + En Cok
+    // Satan 5 Urun kartlari. Output byte-by-byte aynı. Gelecekte selective
+    // partial update icin tek noktadan rebuild yapilabilir hale getirildi.
+    _buildBottomGridHtml: function (data) {
+        var self = window.DashboardView;
+        return '<div class="bottom-grid">' +
                 '<div class="card">' +
                     '<div class="card-header"><div class="card-title">Kritik Uyarılar</div><span class="card-subtitle">' + data.alerts.length + ' uyarı</span></div>' +
                     '<div class="alert-list">' +
@@ -247,11 +309,14 @@ window.DashboardView = {
                         }).join('') +
                     '</tbody></table>' +
                 '</div>' +
-            '</div>' +
+            '</div>';
+    },
 
-            // R7: Nabiz Intelligence Layer — score header refinement (ring + typography),
-            // subtitle typo fix ("Isletme" → "İşletme"), insight grid CSS refine.
-            '<div class="card" style="cursor:pointer;" onclick="window.location.hash=\'#health\'">' +
+    // PERF (Faz 2.1): renderDashboard'dan extract — Nabiz card. Output aynı.
+    _buildNabizCardHtml: function (data) {
+        // R7: Nabiz Intelligence Layer — score header refinement (ring + typography),
+        // subtitle typo fix ("Isletme" → "İşletme"), insight grid CSS refine.
+        return '<div class="card" style="cursor:pointer;" onclick="window.location.hash=\'#health\'">' +
                 '<div class="card-header">' +
                     '<div><div class="card-title">Nabız</div><span class="card-subtitle">İşletme performans skoru</span></div>' +
                     '<div style="display:flex;align-items:center;gap:12px;">' +
@@ -274,11 +339,6 @@ window.DashboardView = {
                     }).join('') +
                 '</div>' +
             '</div>';
-
-        self.bindGlobalKpiToggle();
-        self.renderSalesChart(data);
-        self.renderExpenseChart(data);
-        self.updateHeaderWidgets(data);
     },
 
     buildKpiCard(key, title, value, change, label, isPercent) {
@@ -470,23 +530,39 @@ window.DashboardView = {
 
         var weekly = data.weeklySales || [];
 
-        // Same-data guard: ayni dataset → recreate ETME
+        // Same-data guard: ayni dataset → no-op
         var sig = JSON.stringify(weekly.map(function (s) { return [s.day, s.amount]; }));
         if (window.STATE.charts.salesChart && this._lastSalesSig === sig) {
             return;
         }
         this._lastSalesSig = sig;
 
-        window.destroyChart('salesChart');
-
         var values = weekly.map(function (s) { return Number(s.amount) || 0; });
+        var labels = weekly.map(function (s) { return s.day; });
         var nonZero = values.filter(function (v) { return v > 0; });
         var avg = nonZero.length
             ? nonZero.reduce(function (a, b) { return a + b; }, 0) / nonZero.length
             : 0;
 
+        // PERF (Faz 2.1): Chart instance varsa IN-PLACE update — destroy/create
+        // 100-300ms maliyetli; data.labels + data.datasets + update() << ~10-30ms.
+        // avgLinePlugin'in avg degeri artik chart.options.plugins.avgLine'dan
+        // okunuyor — closure capture problemi yok, in-place uyumlu.
+        var existing = window.STATE.charts.salesChart;
+        if (existing && existing.config && existing.config.type === 'line') {
+            existing.data.labels = labels;
+            existing.data.datasets[0].data = values;
+            if (existing.options && existing.options.plugins) {
+                existing.options.plugins.avgLine = { avg: avg };
+            }
+            existing.update();
+            return;
+        }
+
+        // Cold path: yeni chart yarat
+        window.destroyChart('salesChart');
+
         // R4: Area gradient fill — top emerald 0.18 → bottom transparent.
-        // Mockup ~0.40+ idi; B disiplini ile %35 dial-down.
         function areaGradient(context) {
             var chart = context.chart;
             var area = chart.chartArea;
@@ -497,15 +573,19 @@ window.DashboardView = {
             return g;
         }
 
-        // V1.2: Average line plugin — dashed neutral reference, dominant degil.
+        // V1.2: Average line plugin — avg degeri chart.options.plugins.avgLine'dan
+        // okunur (closure capture yerine). Boylece in-place update'lerde yeni avg
+        // dogru reflect olur.
         var avgLinePlugin = {
             id: 'avgLine',
             afterDatasetsDraw: function (chart) {
-                if (!avg || avg <= 0) return;
+                var opts = chart.options.plugins && chart.options.plugins.avgLine;
+                var avgVal = opts && opts.avg;
+                if (!avgVal || avgVal <= 0) return;
                 var area = chart.chartArea;
                 var yScale = chart.scales.y;
                 if (!area || !yScale) return;
-                var y = yScale.getPixelForValue(avg);
+                var y = yScale.getPixelForValue(avgVal);
                 if (y < area.top || y > area.bottom) return;
 
                 var c = chart.ctx;
@@ -523,7 +603,7 @@ window.DashboardView = {
                 c.fillStyle = 'rgba(15, 23, 42, 0.45)';
                 c.textAlign = 'right';
                 c.textBaseline = 'bottom';
-                c.fillText('Ort. ' + Math.round(avg).toLocaleString('tr-TR'), area.right - 4, y - 3);
+                c.fillText('Ort. ' + Math.round(avgVal).toLocaleString('tr-TR'), area.right - 4, y - 3);
                 c.restore();
             }
         };
@@ -568,6 +648,10 @@ window.DashboardView = {
                     intersect: false
                 },
                 plugins: {
+                    // PERF (Faz 2.1): avgLinePlugin'in dinamik config'i burada.
+                    // In-place update'lerde renderSalesChart yeni avg degerini
+                    // chart.options.plugins.avgLine.avg = newAvg ile gunceller.
+                    avgLine: { avg: avg },
                     legend: { display: false },
                     // R4: Tooltip — V1.2 dark dilini koru, padding/radius
                     // refine + soft shadow ekle (Chart.js native shadow yok,
@@ -645,10 +729,7 @@ window.DashboardView = {
         }
         this._lastExpenseSig = sig;
 
-        window.destroyChart('expenseChart');
-
         // V1.3: Sort by amount desc → en buyuk kategori index 0 = brand renk.
-        // Visual hierarchy upstream'e dokunmadan burada uygulanir.
         var sorted = cats.slice().sort(function (a, b) {
             return (Number(b.amount) || 0) - (Number(a.amount) || 0);
         });
@@ -657,17 +738,39 @@ window.DashboardView = {
             return s + (Number(c.amount) || 0);
         }, 0);
 
-        // V1.3: Brand-aligned palette — random c.color yerine sequential
-        // brand+slate. Largest = brand emerald, geri kalanlar slate cool.
-        // Stripe/Linear pattern: hero category visual anchor, digerleri receder.
         var palette = ['#10B981', '#475569', '#64748B', '#94A3B8', '#CBD5E1', '#E2E8F0'];
         var colors = sorted.map(function (c, i) { return palette[i % palette.length]; });
+        var labels = sorted.map(function (c) { return c.name; });
+        var dataVals = sorted.map(function (c) { return Number(c.amount) || 0; });
 
-        // V1.3: Center hero plugin — chart center'inda toplam + label.
-        // Cutout %68 ile yer acildi.
+        // PERF (Faz 2.1): Chart instance varsa IN-PLACE update — destroy/create
+        // pahali (100-300ms). centerHeroPlugin'in total degeri artik chart.options.
+        // plugins.centerHero'dan okunuyor → in-place uyumlu.
+        var existing = window.STATE.charts.expenseChart;
+        if (existing && existing.config && existing.config.type === 'doughnut') {
+            existing.data.labels = labels;
+            existing.data.datasets[0].data = dataVals;
+            existing.data.datasets[0].backgroundColor = colors;
+            existing.data.datasets[0].hoverBackgroundColor = colors;
+            if (existing.options && existing.options.plugins) {
+                existing.options.plugins.centerHero = { total: total };
+            }
+            existing.update();
+            return;
+        }
+
+        // Cold path: yeni chart yarat
+        window.destroyChart('expenseChart');
+
+        // V1.3: Center hero plugin — total degeri chart.options.plugins.centerHero
+        // 'dan okunur (closure capture yerine). In-place chart.update() sonrasi
+        // yeni total dogru reflect olur.
         var centerHeroPlugin = {
             id: 'centerHero',
             afterDraw: function (chart) {
+                var opts = chart.options.plugins && chart.options.plugins.centerHero;
+                var totalVal = opts && opts.total;
+                if (typeof totalVal !== 'number') return;
                 var area = chart.chartArea;
                 if (!area) return;
                 var cx = (area.left + area.right) / 2;
@@ -678,13 +781,10 @@ window.DashboardView = {
                 c.textAlign = 'center';
                 c.textBaseline = 'middle';
 
-                // Toplam tutar — buyuk, weight 800, primary text color
                 c.font = '800 22px Inter, system-ui, sans-serif';
                 c.fillStyle = '#0F172A';
-                c.fillText('₺' + Math.round(total).toLocaleString('tr-TR'), cx, cy - 8);
+                c.fillText('₺' + Math.round(totalVal).toLocaleString('tr-TR'), cx, cy - 8);
 
-                // Label — UPPERCASE, sakin secondary
-                // R5: 10px → 11px, fillStyle muted → secondary (R3.1 hierarchy ile uyum)
                 c.font = '700 11px Inter, system-ui, sans-serif';
                 c.fillStyle = '#475569';
                 c.fillText('TOPLAM GİDER', cx, cy + 14);
@@ -722,6 +822,10 @@ window.DashboardView = {
                     animateScale: false
                 },
                 plugins: {
+                    // PERF (Faz 2.1): centerHeroPlugin'in dinamik config'i.
+                    // In-place update'lerde renderExpenseChart yeni total'i
+                    // chart.options.plugins.centerHero.total = newTotal ile gunceller.
+                    centerHero: { total: total },
                     legend: {
                         position: 'bottom',
                         labels: {
@@ -837,5 +941,11 @@ window.DashboardView = {
         this.isRendering = false;
         this._pendingRefresh = false;
         this.container = null;
+        // PERF (Faz 2.1): View destroy edilince DOM gidiyor — sig'i de sıfırla,
+        // yoksa bir sonraki render'da same-sig + (domStable=false) negatif
+        // branch'e duser ama yine de gereksiz; reset deterministic.
+        this._lastRenderedSig = null;
+        this._lastSalesSig = null;
+        this._lastExpenseSig = null;
     }
 };

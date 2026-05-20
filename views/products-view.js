@@ -737,34 +737,60 @@ window.ProductsView = {
 
         tbody.innerHTML = pageRows.map(function (product) {
             var metrics = window.ProductsView.getProductMetrics(product);
+            var costMissing = window.ProductsView.isCostMissing(product);
             var name = window.ProductsView.escapeHtml(product.name || '-');
             var category = window.ProductsView.escapeHtml(window.ProductsView.getCategoryLabel(product.category_id, product));
             var price = window.ProductsView.formatMoney(product.price);
-            var cost = window.ProductsView.formatMoney(product.cost);
+            // FAZ 1.2: cost=0 → "—" (formatMoney 0₺ yerine). Maliyet
+            // kolonu kendi basina yaniltici degil ama tutarli olsun.
+            var cost = costMissing ? '—' : window.ProductsView.formatMoney(product.cost);
 
             var marginAmount = window.ProductsView.calculateMarginAmount(product.price, product.cost);
             var marginRate = window.ProductsView.calculateMarginRate(product.price, product.cost);
 
             var isActive = product.is_active !== false;
+
+            // FAZ 1.2: cost=missing satirlara hafif amber tint + ayri class
+            //   inactive opacity ile birlestiginde gorsel hierarchy: pasif
+            //   ürünler her şeyin üstüne fade, costMissing aktif ürünler
+            //   amber tinted.
+            var rowClass = costMissing ? 'class="product-cost-missing"' : '';
             var rowStyle = isActive ? '' : 'style="opacity:0.55; background:#f8fafc;"';
+
+            // FAZ 1.2: name yanina amber pill badge (cost=0 ise)
+            var nameCell = name + (costMissing
+                ? ' <span class="badge-missing-cost" title="Bu ürünün hammadde maliyeti tanımlı değil — kâr/marj hesabı yapılamaz">⚠ Maliyetsiz</span>'
+                : '');
 
             var statusBadge = isActive
                 ? '<span style="padding:6px 10px; border-radius:999px; background:#ecfdf5; color:#166534; font-size:12px; font-weight:700;">Aktif</span>'
                 : '<span style="padding:6px 10px; border-radius:999px; background:#f1f5f9; color:#475569; font-size:12px; font-weight:700;">Pasif</span>';
 
-            var performanceBadge = window.ProductsView.renderPerformanceBadge(metrics);
+            // FAZ 1.2: cost yoksa performans badge'i de degerli degil — sustur
+            var performanceBadge = costMissing
+                ? '<span style="color:#94a3b8; font-size:12px;">—</span>'
+                : window.ProductsView.renderPerformanceBadge(metrics);
+
+            // FAZ 1.2: Tahmini Kar — cost=0 → "—", sahte revenue gosterimi yok
+            var profitCell = costMissing
+                ? '<td style="font-weight:700; color:#94a3b8;" title="Maliyet tanımsız — gerçek kar bilinemez">—</td>'
+                : '<td style="font-weight:700; color:' + (metrics.estimatedProfit >= 0 ? '#16a34a' : '#dc2626') + ';">' + window.ProductsView.formatMoney(metrics.estimatedProfit) + '</td>';
 
             return '' +
-                '<tr ' + rowStyle + '>' +
-                    '<td>' + name + '</td>' +
+                '<tr ' + rowClass + ' ' + rowStyle + '>' +
+                    '<td>' + nameCell + '</td>' +
                     '<td>' + category + '</td>' +
                     '<td>' + price + '</td>' +
                     '<td>' + cost + '</td>' +
-                    '<td style="font-weight:700; color:' + marginAmount.color + ';">' + marginAmount.text + '</td>' +
-                    '<td style="font-weight:700; color:' + marginRate.color + ';">' + marginRate.text + '</td>' +
+                    '<td style="font-weight:700; color:' + marginAmount.color + ';"' +
+                        (marginAmount.missing ? ' title="Maliyet tanımlanmamış"' : '') +
+                        '>' + marginAmount.text + '</td>' +
+                    '<td style="font-weight:700; color:' + marginRate.color + ';"' +
+                        (marginRate.missing ? ' title="Maliyet tanımlanmamış"' : '') +
+                        '>' + marginRate.text + '</td>' +
                     '<td style="font-weight:700; color:#0f172a;">' + window.ProductsView.formatInteger(metrics.quantity) + '</td>' +
                     '<td style="font-weight:700; color:#0f172a;">' + window.ProductsView.formatMoney(metrics.revenue) + '</td>' +
-                    '<td style="font-weight:700; color:' + (metrics.estimatedProfit >= 0 ? '#16a34a' : '#dc2626') + ';">' + window.ProductsView.formatMoney(metrics.estimatedProfit) + '</td>' +
+                    profitCell +
                     '<td>' + performanceBadge + '</td>' +
                     '<td>' + statusBadge + '</td>' +
                     '<td>' +
@@ -852,6 +878,23 @@ window.ProductsView = {
     compareProducts: function (a, b) {
         var dir = this.filters.sortDir === 'desc' ? -1 : 1;
         var sortBy = this.filters.sortBy;
+
+        // FAZ 1.2: costMissing tabanli sortlar (kar/marj) icin
+        // costMissing urunler DAIMA en sona atilir (asc/desc bagimsiz).
+        // Boylece "Kar Orani Yuksek -> Dusuk" sirasinda %100 yalanini
+        // sirasiz hale getirip listenin dibine koruz; gercek maliyetli
+        // urunler once siralanir.
+        var COST_BASED_SORTS = ['margin_amount', 'margin_rate', 'profit_est'];
+        if (COST_BASED_SORTS.indexOf(sortBy) !== -1) {
+            var aMissing = this.isCostMissing(a);
+            var bMissing = this.isCostMissing(b);
+            if (aMissing && !bMissing) return 1;    // a en sona
+            if (!aMissing && bMissing) return -1;   // b en sona
+            // Ikisi de missing ise name ile tie-break (deterministic)
+            if (aMissing && bMissing) {
+                return this.normalizeName(a.name).localeCompare(this.normalizeName(b.name), 'tr');
+            }
+        }
 
         if (sortBy === 'name') {
             return this.normalizeName(a.name).localeCompare(this.normalizeName(b.name), 'tr') * dir;
@@ -2131,6 +2174,17 @@ window.ProductsView = {
         return '-';
     },
 
+    // FAZ 1.2 — Cost=0 misleading profitability hardening.
+    // Ürün cost null veya 0 ise "maliyetsiz" sayılır: per-product
+    // kar/marj hesabi guvenilir degildir (sahte %100). UX katmaninda
+    // "—" gosterilir, badge eklenir, sort'ta en sona atilir.
+    // Backend / RPC dokunulmadi.
+    isCostMissing: function (product) {
+        if (!product) return false;
+        if (product.cost === null || typeof product.cost === 'undefined') return true;
+        return Number(product.cost) === 0;
+    },
+
     getMarginAmountValue: function (product) {
         var price = Number(product.price) || 0;
         var cost = Number(product.cost) || 0;
@@ -2145,6 +2199,11 @@ window.ProductsView = {
     },
 
     calculateMarginAmount: function (price, cost) {
+        // FAZ 1.2: cost=null veya cost=0 → "—" goster, sahte %100
+        // marj algisini engelle. Hesap bozulmaz, sadece render.
+        if (cost === null || typeof cost === 'undefined' || Number(cost) === 0) {
+            return { text: '—', color: '#94a3b8', missing: true };
+        }
         var value = (Number(price) || 0) - (Number(cost) || 0);
         if (value > 0) return { text: this.formatMoney(value), color: '#16a34a' };
         if (value === 0) return { text: this.formatMoney(value), color: '#64748b' };
@@ -2152,6 +2211,12 @@ window.ProductsView = {
     },
 
     calculateMarginRate: function (price, cost) {
+        // FAZ 1.2: cost=null veya cost=0 → "—" goster, %100 yalanini
+        // engelle. price=0 ise (eski davranis) "-" goster.
+        if (cost === null || typeof cost === 'undefined' || Number(cost) === 0) {
+            return { text: '—', color: '#94a3b8', missing: true };
+        }
+
         var p = Number(price) || 0;
         var c = Number(cost) || 0;
 

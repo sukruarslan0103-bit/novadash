@@ -1542,3 +1542,39 @@ input[type="number"] {
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum';
 }
+
+/* ============================================================
+   FAZ 1.2 — COST=0 PRODUCT WARNING UX
+   Reçetesiz / maliyetsiz urunlerin sahte %100 kar algisini
+   gorsel olarak isaretler. Onboarding'i bloklamaz; sadece
+   patron'a "bu urunun maliyeti tanimli degil, kar hesabi
+   guvenilmez" sinyali verir.
+   ============================================================ */
+
+/* Inline pill badge — urun adi yaninda */
+.badge-missing-cost {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 9px;
+    margin-left: 8px;
+    border-radius: 999px;
+    background: #fef3c7;       /* amber-100 */
+    color: #92400e;            /* amber-800 */
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+    border: 1px solid #fde68a; /* amber-200, hafif border */
+}
+
+/* Row tint — cok hafif amber, alarm degil, sinyalleyici */
+.product-cost-missing > td {
+    background: #fffbeb;       /* amber-50 — neredeyse gorunmez */
+}
+
+/* Hover'da biraz daha belirgin ama hala soft */
+.product-cost-missing:hover > td {
+    background: #fef3c7;       /* amber-100 */
+}

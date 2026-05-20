@@ -342,12 +342,22 @@ window.AnalyticsService = {
 
     buildTopProducts(rows) {
         return (rows || []).slice(0, 5).map(function (item, index) {
+            var revenue = Number(item.revenue || 0);
+            var profit = Number(item.estimated_profit || 0);
+            // FAZ 1.2 Commit 2: cost_missing detection.
+            // Backend `top_products` cost alani DONDURMUYOR (get_dashboard_analytics
+            // sadece revenue + estimated_profit veriyor). Tureyim formul:
+            //   estimated_profit = revenue - SUM(ps.cost * ps.quantity)
+            //   cost effectively 0 ise → profit == revenue
+            // Mixed sales (bir kismi cost'lu): profit < revenue → flag=false.
+            // 0.005 tolerance → numeric round-trip safety (NUMERIC(12,2)).
             return {
                 rank: index + 1,
                 name: item.name,
                 sales: Number(item.quantity || 0),
-                revenue: Number(item.revenue || 0),
-                profit: Number(item.estimated_profit || 0)
+                revenue: revenue,
+                profit: profit,
+                cost_missing: (revenue > 0 && profit >= revenue - 0.005)
             };
         });
     },
@@ -619,13 +629,20 @@ window.AnalyticsService = {
         });
 
         // === TOP PRODUCTS (already grouped & limited by DB) ===
+        // FAZ 1.2 Commit 2: cost_missing flag — backend `top_products`
+        // cost alani dondurmuyor; estimated_profit==revenue durumundan
+        // tureriz. Tolerance 0.005 (numeric noise). Detail icin
+        // buildTopProducts() yorumuna bak.
         var topProducts = (d.top_products || []).map(function (item, index) {
+            var revenue = Number(item.revenue || 0);
+            var profit = Number(item.estimated_profit || 0);
             return {
                 rank: index + 1,
                 name: item.name || 'Bilinmeyen Ürün',
                 sales: Number(item.quantity || 0),
-                revenue: Number(item.revenue || 0),
-                profit: Number(item.estimated_profit || 0)
+                revenue: revenue,
+                profit: profit,
+                cost_missing: (revenue > 0 && profit >= revenue - 0.005)
             };
         });
 

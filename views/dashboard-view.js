@@ -224,11 +224,25 @@ window.DashboardView = {
                         data.topProducts.map(function (p) {
                             // R6: Rank 1 dominant brand; 2-5 soft brand-tinted (hierarchy).
                             var rankCls = (Number(p.rank) === 1) ? 'product-rank is-leader' : 'product-rank';
-                            return '<tr>' +
+
+                            // FAZ 1.2 Commit 2: cost_missing → Kar sutunu "—",
+                            // urun adi yaninda amber pill badge. Sahte revenue=profit
+                            // gosterimi yok. Backend hesaplari ve revenue alani
+                            // dokunulmadi (gercek satis adet+ciro hala goruluyor).
+                            var nameCell = window.Formatters.escapeHtml(p.name)
+                                + (p.cost_missing
+                                    ? ' <span class="badge-missing-cost" title="Bu ürünün hammadde maliyeti tanımlı değil — kâr hesabı yapılamaz">⚠ Maliyetsiz</span>'
+                                    : '');
+
+                            var profitCell = p.cost_missing
+                                ? '<td style="color:#94a3b8;" title="Maliyet tanımsız — gerçek kâr bilinemez">—</td>'
+                                : '<td>' + self.formatCurrency(p.profit) + '</td>';
+
+                            return '<tr' + (p.cost_missing ? ' class="product-cost-missing"' : '') + '>' +
                                 '<td><span class="' + rankCls + '">' + p.rank + '</span></td>' +
-                                '<td>' + window.Formatters.escapeHtml(p.name) + '</td>' +
+                                '<td>' + nameCell + '</td>' +
                                 '<td>' + self.formatNumber(p.sales) + ' adet</td>' +
-                                '<td>' + self.formatCurrency(p.profit) + '</td>' +
+                                profitCell +
                             '</tr>';
                         }).join('') +
                     '</tbody></table>' +

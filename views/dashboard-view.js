@@ -371,13 +371,29 @@ window.DashboardView = {
         var toggle = document.getElementById('globalKpiToggle');
         if (!toggle) return;
 
+        // PERF: Her renderDashboard() bu fn'i tekrar cagiriyor (line 278).
+        // Eski button'lar artik DOM'da yok ama listener'lari _listeners[]'a
+        // birikmis kaliyordu (destroy'a kadar). Yeni butonlara bind etmeden
+        // ONCE eskileri filtrele — tag'leme ile.
+        self._listeners = (self._listeners || []).filter(function (l) {
+            if (l && l._tag === 'kpiToggle') {
+                try { l.el.removeEventListener(l.event, l.fn); } catch (e) { /* noop */ }
+                return false;
+            }
+            return true;
+        });
+
         toggle.querySelectorAll('.kpi-toggle-btn').forEach(function (btn) {
-            self._on(btn, 'click', function () {
+            var fn = function () {
                 var p = this.dataset.period;
                 if (p === 'monthly' || p === 'daily') {
                     self.setKpiPeriod(p);
                 }
-            });
+            };
+            btn.addEventListener('click', fn);
+            // _on() helper yerine direkt push — _tag ile filtrelenebilsin.
+            // _listeners'a girdigi icin destroy() yine temizler.
+            self._listeners.push({ el: btn, event: 'click', fn: fn, _tag: 'kpiToggle' });
         });
     },
 

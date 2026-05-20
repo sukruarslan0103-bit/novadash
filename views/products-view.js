@@ -543,18 +543,28 @@ window.ProductsView = {
             }
         }
 
-        var self = this;
-        this._on(window, 'products:updated', async function () {
-            if (!self._isActive) return;
-            await self.loadProducts();
-            if (!self._isActive) return;
-        });
-        // Satis sonrasi performanceMap'in stale kalmamasi icin yeniden yukle.
-        this._on(window, 'sales:updated', async function () {
-            if (!self._isActive) return;
-            await self.loadProducts();
-            if (!self._isActive) return;
-        });
+        // PERF: data refresh listener'lari TEK SEFER bind. render() her
+        // calistirildiginda (cache hit dahil) eskiden _on() ile yeniden
+        // bind ediliyordu → _listeners[] sisiyor, ayni event icin N x
+        // loadProducts cagriliyordu. Guard ile module-level idempotent.
+        // destroy() yine _removeAllListeners ile temizler; _eventsBound
+        // flag'ini destroy'da false yapmadigimiz icin yeni render'da
+        // tekrar bind olmaz (tek listener'i koruyoruz).
+        if (!this._dataEventsBound) {
+            this._dataEventsBound = true;
+            var self = this;
+            this._on(window, 'products:updated', async function () {
+                if (!self._isActive) return;
+                await self.loadProducts();
+                if (!self._isActive) return;
+            });
+            // Satis sonrasi performanceMap'in stale kalmamasi icin yeniden yukle.
+            this._on(window, 'sales:updated', async function () {
+                if (!self._isActive) return;
+                await self.loadProducts();
+                if (!self._isActive) return;
+            });
+        }
     },
 
     toggleForm: function (forceOpen) {
@@ -936,9 +946,28 @@ window.ProductsView = {
     },
 
     handleSearch: function (value) {
+        // PERF: Her keystroke'ta full filter+sort+innerHTML rebuild
+        // pahaliydi (100+ urun ile hissedilir kasik). 300ms debounce ile
+        // typing tamamlandiktan sonra render. State (filters.search) hemen
+        // guncellenir; pagination'i 1'e dondurmek de hemen (kullanici
+        // sayfa N'de iken arar). Sadece render zinciri ertelenir.
         this.filters.search = value || '';
         this.pagination.page = 1;
-        this.applyFiltersAndRender();
+
+        // window.debounce js/cache.js'te tanimli (300ms default).
+        // Lazy-init: ilk kullanima kadar wrapper olusmaz.
+        if (!this._searchDebouncer && typeof window.debounce === 'function') {
+            var self = this;
+            this._searchDebouncer = window.debounce(function () {
+                self.applyFiltersAndRender();
+            }, 300);
+        }
+        if (this._searchDebouncer) {
+            this._searchDebouncer();
+        } else {
+            // Fallback (debounce util yoksa) — eski sync davranis
+            this.applyFiltersAndRender();
+        }
     },
 
     handleCategoryFilter: function (categoryId) {
@@ -2304,6 +2333,10 @@ window.ProductsView = {
     destroy: function () {
         this._isActive = false;
         this._removeAllListeners();
+        // PERF: _dataEventsBound guard'ini reset et — render listener'larini
+        // _removeAllListeners temizledi; bir sonraki render'da yeniden bind
+        // edilmesi icin flag'i da sifirla.
+        this._dataEventsBound = false;
         this.products = [];
         this.filteredProducts = [];
         this.categories = [];

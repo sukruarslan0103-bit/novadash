@@ -400,10 +400,14 @@ window.SalesService = (function() {
                 window.ViewCache.invalidate('dashboard:' + tenantId);
             }
 
+            // PERF: 'dashboard:refresh' kaldirildi — DashboardView zaten
+            // ust uc event'i (sales/expenses/products) dinliyor; 4. event
+            // ayni view'a 4. refresh tetikliyordu (duplicate cascade).
+            // 3 event hala 3 ayri refresh ediyor ama dashboard handler
+            // isRendering guard'i sirayli yutuyor.
             window.dispatchEvent(new Event('sales:updated'));
             window.dispatchEvent(new Event('expenses:updated'));
             window.dispatchEvent(new Event('products:updated'));
-            window.dispatchEvent(new Event('dashboard:refresh'));
 
             var ins = data.inserted || {};
             var skp = data.skipped || {};

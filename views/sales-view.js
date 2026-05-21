@@ -266,6 +266,13 @@ window.SalesView = {
         this.salesData = [];
         this.productSalesData = [];
         this._costMap = new Map();
+        // PERF (Faz 2.3): Render guard'lari resetle. DOM gidiyor, sig'ler
+        // anlamsiz. Bir sonraki render fresh, kpi mount yeniden gerekir.
+        this._kpiMounted = false;
+        this._lastTableSig = null;
+        this._monthlyRowsCache = null;
+        this._monthlyRowsCacheRev = -1;
+        this._salesRev = 0;
     },
 
     bindEvents() {
@@ -386,6 +393,9 @@ window.SalesView = {
                 await this.loadProducts();
                 if (!this._isActive) return;
                 this._applyCachedPayload(cached, fetchKey);
+                // PERF (Faz 2.3): Data versiyonu artir — render guard'lar
+                // (renderTable sig, getMonthlyRows memo) bunu okuyor.
+                this._salesRev = (this._salesRev || 0) + 1;
                 this.renderSummary();
                 this.renderTable();
 
@@ -443,6 +453,9 @@ window.SalesView = {
 
             this._lastFetchKey = fetchKey;
             this._saveToCache(fetchKey);
+
+            // PERF (Faz 2.3): Data versiyonu artir — fresh fetch sonrasi.
+            this._salesRev = (this._salesRev || 0) + 1;
 
             this.renderSummary();
             this.renderTable();
@@ -582,6 +595,14 @@ window.SalesView = {
     },
 
     getMonthlyRows() {
+        // PERF (Faz 2.3): Memoize. salesData O(n) grouping aylik view'da
+        // her renderSummary + renderTable cagrisinda recompute oluyordu.
+        // 5000 satis: ~10-30ms × 2 = ~60ms. _salesRev artmadigi surece
+        // ayni grouping sonucu reuse edilir.
+        if (this._monthlyRowsCache && this._monthlyRowsCacheRev === this._salesRev) {
+            return this._monthlyRowsCache;
+        }
+
         const monthMap = {};
 
         for (const sale of this.salesData) {
@@ -601,7 +622,7 @@ window.SalesView = {
         const trMonths = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
             'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 
-        return months.map(key => {
+        const result = months.map(key => {
             const total = monthMap[key].total;
             const cost = monthMap[key].cost;
             const profit = total - cost;
@@ -623,6 +644,10 @@ window.SalesView = {
                 saleId: null
             };
         });
+
+        this._monthlyRowsCache = result;
+        this._monthlyRowsCacheRev = this._salesRev || 0;
+        return result;
     },
 
     async loadKpiTotals() {
@@ -695,22 +720,46 @@ window.SalesView = {
         const totalProfit = totalRevenue - totalCost;
         const avgMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
-        const cards = [
-            { label: 'Toplam Ciro', value: window.Formatters.currency(totalRevenue), color: '#0f172a' },
-            { label: 'Toplam Maliyet', value: window.Formatters.currency(totalCost), color: '#dc2626' },
-            { label: 'Toplam Kar', value: window.Formatters.currency(totalProfit), color: totalProfit >= 0 ? '#16a34a' : '#dc2626' },
-            { label: 'Ort. Kar Oranı', value: `%${avgMargin.toFixed(1)}`, color: avgMargin >= 40 ? '#16a34a' : avgMargin >= 20 ? '#f59e0b' : '#dc2626' }
-        ];
+        // PERF (Faz 2.3): KPI persistence. Ilk mount'ta full HTML (skeleton),
+        // sonraki update'lerde sadece text/color (text node mutation). Expenses
+        // view'in _softUpdate pattern'i ile birebir. Mevcut innerHTML rebuild
+        // her renderSummary'de 4 card recreate ediyordu (paint cost).
+        const revColor = '#0f172a';
+        const costColor = '#dc2626';
+        const profitColor = totalProfit >= 0 ? '#16a34a' : '#dc2626';
+        const marginColor = avgMargin >= 40 ? '#16a34a' : avgMargin >= 20 ? '#f59e0b' : '#dc2626';
 
-        el.innerHTML = cards.map(c => `
-            <div style="
-                background:#fff;border:1px solid #e5e7eb;border-radius:14px;
-                padding:18px 20px;box-shadow:0 2px 8px rgba(15,23,42,0.04);
-            ">
-                <div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">${c.label}</div>
-                <div style="font-size:22px;font-weight:800;color:${c.color};">${c.value}</div>
-            </div>
-        `).join('');
+        const revText = window.Formatters.currency(totalRevenue);
+        const costText = window.Formatters.currency(totalCost);
+        const profitText = window.Formatters.currency(totalProfit);
+        const marginText = '%' + avgMargin.toFixed(1);
+
+        // First mount: skeleton HTML ile ID'li node'lar yarat
+        if (!this._kpiMounted || !document.getElementById('sv-kpi-rev-v')) {
+            const card = (id, label) =>
+                `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px 20px;box-shadow:0 2px 8px rgba(15,23,42,0.04);">` +
+                    `<div style="font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">${label}</div>` +
+                    `<div id="sv-kpi-${id}-v" style="font-size:22px;font-weight:800;"></div>` +
+                `</div>`;
+            el.innerHTML =
+                card('rev',    'Toplam Ciro') +
+                card('cost',   'Toplam Maliyet') +
+                card('profit', 'Toplam Kar') +
+                card('margin', 'Ort. Kar Oranı');
+            this._kpiMounted = true;
+        }
+
+        // Soft update: text + color (paint sadece bu node'lar uzerinde)
+        const setKpi = (id, text, color) => {
+            const node = document.getElementById('sv-kpi-' + id + '-v');
+            if (!node) return;
+            if (node.textContent !== text) node.textContent = text;
+            if (node.style.color !== color) node.style.color = color;
+        };
+        setKpi('rev',    revText,    revColor);
+        setKpi('cost',   costText,   costColor);
+        setKpi('profit', profitText, profitColor);
+        setKpi('margin', marginText, marginColor);
     },
 
     renderTable() {
@@ -720,6 +769,8 @@ window.SalesView = {
         const allRows = this.getDisplayRows();
 
         if (!allRows.length) {
+            // Empty state: sig'i temizle (yeni data gelirse rebuild garantili)
+            this._lastTableSig = null;
             tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:#94a3b8;font-size:14px;">Kayıt bulunamadı.</td></tr>`;
             this.renderPagination(0, 0);
             return;
@@ -739,6 +790,23 @@ window.SalesView = {
             var start = (this.currentPage - 1) * this.pageSize;
             pageRows = allRows.slice(start, start + this.pageSize);
         }
+
+        // PERF (Faz 2.3): tbody same-sig SKIP. _salesRev her loadData success/
+        // cache-hit'inde artar — same data + same page + same viewMode +
+        // same pageSize + same pageRows.length kombinasyonu icin rebuild
+        // yapilmaz. Sales detail/delete sonrasi loadData(true) cagriliyor →
+        // _salesRev artiyor → sig invalidate → fresh render.
+        var tableSig = (this._salesRev || 0) + '|' +
+                       this.viewMode + '|' +
+                       this.currentPage + '/' +
+                       this.pageSize + '#' +
+                       pageRows.length + ':' + totalItems;
+        if (this._lastTableSig === tableSig && tbody.children && tbody.children.length > 0) {
+            // Pagination yine de cagrilsin (totalPages degisikligi icin guvenli)
+            this.renderPagination(totalItems, totalPages);
+            return;
+        }
+        this._lastTableSig = tableSig;
 
         tbody.innerHTML = pageRows.map(row => {
             const profitColor = row.profit >= 0 ? '#16a34a' : '#dc2626';

@@ -500,6 +500,9 @@ window.ProductsView = {
                     this.filteredProducts = cached.filteredProducts || cached.products;
                     this.categories = cached.categories || [];
                     this.performanceMap = new Map(cached.performanceEntries || []);
+                    // PERF (Faz 2.2): Cache hit'te products array referansi
+                    // degisti — sig invalidate.
+                    this._productsRev = (this._productsRev || 0) + 1;
                     // Categories select'lerini cached.categories'ten doldur
                     var sel0 = document.getElementById('productCategory');
                     var fSel0 = document.getElementById('productCategoryFilter');
@@ -698,6 +701,10 @@ window.ProductsView = {
                 }
             }
 
+            // PERF (Faz 2.2): Data versiyonu artir → applyFiltersAndRender
+            // signature mismatch yapsin, stale filter sonucu reuse edilmesin.
+            this._productsRev = (this._productsRev || 0) + 1;
+
             this.pagination.page = 1;
             this.applyFiltersAndRender();
             this._renderProductInsights();
@@ -708,6 +715,26 @@ window.ProductsView = {
     },
 
     applyFiltersAndRender: function () {
+        // PERF (Faz 2.2): Filter+sort signature cache. Ayni search +
+        // categoryId + sortBy + sortDir + products data versiyonu icin
+        // filteredProducts yeniden compute edilmez. Sadece sayfa cevirme
+        // veya page-size degisiminde renderTable/Pagination cagriliyorsa
+        // bu yol tetiklenir; bunlarin sig'i de _filterSig icinde degil
+        // ama renderTable kendi guard'iyla skip eder.
+        var sigKey = (this.filters.search || '') + '|' +
+                     (this.filters.categoryId || '') + '|' +
+                     (this.filters.sortBy || '') + '|' +
+                     (this.filters.sortDir || '') + '|' +
+                     (this._productsRev || 0);
+
+        if (this._filterSig === sigKey && this.filteredProducts && this.filteredProducts.length === this._filteredLenAtSig) {
+            // Same filter+sort, products array degisikligi yok → recompute SKIP
+            this.ensurePageInRange();
+            this.renderTable();
+            this.renderPagination();
+            return;
+        }
+
         var rows = this.products.slice();
 
         if (this.filters.search) {
@@ -729,6 +756,8 @@ window.ProductsView = {
         });
 
         this.filteredProducts = rows;
+        this._filterSig = sigKey;
+        this._filteredLenAtSig = rows.length;
         this.ensurePageInRange();
         this.renderTable();
         this.renderPagination();
@@ -737,6 +766,21 @@ window.ProductsView = {
     renderTable: function () {
         var tbody = document.getElementById('productsTableBody');
         if (!tbody) return;
+
+        // PERF (Faz 2.2): Render signature — pageRows ayni ise tbody.innerHTML
+        // rebuild SKIP. Sig'e dahil: page + pageSize + filteredProducts versiyon
+        // (_filterSig changes when products data / filters / sort changes) +
+        // filteredProducts.length (defensive). Bu sayede ardisik renderTable
+        // cagrilari (orn. applyFiltersAndRender same-sig dali) no-op olur.
+        var renderSig = (this._filterSig || '') + '@' +
+                        (this.pagination.page || 1) + '/' +
+                        (this.pagination.pageSize || 10) + '#' +
+                        (this.filteredProducts ? this.filteredProducts.length : 0);
+        if (this._lastTableRenderSig === renderSig && tbody.children && tbody.children.length > 0) {
+            // Same content rendered, no DOM mutation
+            return;
+        }
+        this._lastTableRenderSig = renderSig;
 
         if (!this.filteredProducts.length) {
             tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:24px; color:#64748b;">Filtreye uygun ürün bulunamadı.</td></tr>';
@@ -2343,6 +2387,12 @@ window.ProductsView = {
         this.performanceMap = new Map();
         this.editingId = null;
         this.closeRecipeModal();
+        // PERF (Faz 2.2): Render signature cache reset — DOM gidiyor,
+        // sig artik anlamsiz. Bir sonraki render fresh.
+        this._filterSig = null;
+        this._filteredLenAtSig = null;
+        this._lastTableRenderSig = null;
+        this._productsRev = 0;
     },
 
     initPurchase: function () {

@@ -74,8 +74,8 @@ DECLARE
 BEGIN
     PERFORM public._lt_assert_test_tenant(p_tenant_id);
 
-    -- SAFE MODE: session_replication_role dokunulmaz. AFTER DELETE
-    -- trigger'lari (purchase_items → sync_raw_material_cost,
+    -- SAFE MODE: replication-role degisimine dokunulmaz (hosted uyumu).
+    -- AFTER DELETE trigger'lari (purchase_items → sync_raw_material_cost,
     -- product_recipes → sync_product_cost) calisacak — ama sonrasinda
     -- raw_materials ve products DELETE edildigi icin side effect'ler
     -- zararsiz (gecici UPDATE'ler).
@@ -238,9 +238,9 @@ BEGIN
             v_existing_rm, v_existing_prod, p_tenant_id;
     END IF;
 
-    -- SAFE MODE: session_replication_role dokunulmaz. set_tenant_id
-    -- trigger'i NEW.tenant_id IS NOT NULL ise pass-through (999:1778)
-    -- → bizim explicit verdigimiz tenant_id korunur.
+    -- SAFE MODE: replication-role degisimine dokunulmaz (hosted uyumu).
+    -- set_tenant_id trigger'i NEW.tenant_id IS NOT NULL ise pass-through
+    -- (999:1778) → bizim explicit verdigimiz tenant_id korunur.
 
     -- ============ 1) CATEGORIES (6 product) ============
     INSERT INTO categories (tenant_id, name, type, color, sort_order)
@@ -391,12 +391,14 @@ BEGIN
         RAISE EXCEPTION '[059] FAIL: fonksiyonlar yok';
     END IF;
 
-    -- session_replication_role HIC kullanilmamali (Supabase hosted uyumu)
-    IF v_src_cleanup LIKE '%session_replication_role%' THEN
-        RAISE EXCEPTION '[059] FAIL: cleanup hala session_replication_role kullaniyor';
+    -- Replication-role degisim cagrisi HIC kullanilmamali (Supabase hosted
+    -- uyumu). Pattern: yorumlardaki kelime mention'larini IGNORE et;
+    -- sadece gercek set_config(...) cagrisini detect et.
+    IF v_src_cleanup ~* E'set_config\\s*\\(\\s*''session_replication_role' THEN
+        RAISE EXCEPTION '[059] FAIL: cleanup hala set_config(replication-role) cagiriyor';
     END IF;
-    IF v_src_generate LIKE '%session_replication_role%' THEN
-        RAISE EXCEPTION '[059] FAIL: generate hala session_replication_role kullaniyor';
+    IF v_src_generate ~* E'set_config\\s*\\(\\s*''session_replication_role' THEN
+        RAISE EXCEPTION '[059] FAIL: generate hala set_config(replication-role) cagiriyor';
     END IF;
 
     -- FAZ 2.A marker'i korunmus mu?

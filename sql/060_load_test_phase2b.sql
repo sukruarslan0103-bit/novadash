@@ -337,10 +337,14 @@ BEGIN
             -- Enflasyon: eski tarih ucuz (base cost'in %70-130'u),
             -- yeni tarih pahalı (base cost'in %95-130'u).
             -- Aynı RM'de farklı fiyatlar (aynı RM birden fazla alış = farklı unit_cost).
+            --
+            -- FIX: (CURRENT_DATE - date) zaten integer (gun sayisi) doner;
+            -- EXTRACT(EPOCH FROM integer) invalid. Direkt ::numeric / 365.0
+            -- ile yil olarak normalize. Mantik aynı.
             SELECT round(
                 (rm.cost * GREATEST(0.3,
                     (0.7 + (1.0 - LEAST(1.0,
-                        EXTRACT(EPOCH FROM (CURRENT_DATE - purchase_date.d)) / 86400.0 / 365.0
+                        (CURRENT_DATE - purchase_date.d)::numeric / 365.0
                     )) * 0.3)
                     * (0.85 + random() * 0.30)
                 ))::numeric, 4

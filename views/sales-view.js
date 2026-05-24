@@ -239,7 +239,13 @@ window.SalesView = {
         `;
 
         this.bindEvents();
-        await this.loadData(true);
+        // PERF (Faz 2.4): Cache-aware enter — force=false. Onceden render()
+        // her cagrisinda force=true ile cache bypass ediyordu → sekme her
+        // acilisinda RPC. Cache hit (60sn TTL icinde + same fetchKey) ise
+        // ~30-100ms instant render; cache miss eski RPC akisi.
+        // sales:updated event listener'i cache invalidate ediyor → fresh
+        // data garantisi mutation sonrasi korunuyor.
+        await this.loadData(false);
         if (!this._isActive) return;
     },
 
@@ -375,12 +381,17 @@ window.SalesView = {
     _saveToCache(fetchKey) {
         if (!window.ViewCache) return;
 
+        // PERF (Faz 2.4): TTL 60sn — products-view ile uyumlu. ViewCache
+        // default 5dk; sales icin daha kisa stale window guvenli.
+        // sales:updated event listener cache'i invalidate ediyor zaten;
+        // TTL sadece "kullanici 60sn sonra geri donerse fresh fetch"
+        // upper bound olarak gorev yapar.
         window.ViewCache.set(fetchKey, {
             salesData: this.salesData,
             productSalesData: this.productSalesData,
             totalCount: this.totalCount,
             totalPages: this.totalPages
-        });
+        }, 60 * 1000);
     },
 
     async loadData(forceRefresh) {

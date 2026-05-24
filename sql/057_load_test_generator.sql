@@ -351,7 +351,7 @@ BEGIN
     END IF;
 
     RAISE NOTICE '[057] OK: load test generator FAZ 1 (infrastructure) aktif | 3 fn registered';
-    RAISE NOTICE '[057] NEXT: manuel test tenant create (name LIKE LOAD_TEST%, slug LIKE load-test-%)';
-    RAISE NOTICE '[057] TEST: SELECT generate_test_dataset(''<tenant_id>''::uuid);  -- dry-run default';
+    RAISE NOTICE '[057] NEXT: manuel test tenant create (name LIKE LOAD_TEST%%, slug LIKE load-test-%%)';
+    RAISE NOTICE '[057] TEST: SELECT generate_test_dataset(<tenant_id>::uuid);  -- dry-run default';
 END;
 $$;

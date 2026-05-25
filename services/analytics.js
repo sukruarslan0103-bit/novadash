@@ -563,11 +563,29 @@ window.AnalyticsService = {
         // share edilir; render gelirse await eder.
         // Catch silent: prefetch failure render path'ini bozmaz, render
         // kendi error handling'ini yapar.
+        //
+        // CACHE.SET (Faz 3.3-alt fix): RPC tamamlandıktan sonra ViewCache'e
+        // yaz. Render prefetch'ten SONRA başlarsa _inflightAnalytics null
+        // (finally reset) → eskiden ikinci RPC açılırdı. Şimdi cache hit
+        // edilir → ikinci RPC YOK. Key format dashboard-view.js:71 ile
+        // birebir aynı; senkron kayması olmamali (eger filters STATE'i
+        // değisirse iki yerde de aynı format kullanılır).
         var self = this;
         try {
             // STATE.tenant.id hazir olmali — handleLogin'den sonra cagrilir.
             if (!window.STATE || !window.STATE.tenant || !window.STATE.tenant.id) return;
-            self.getDashboardAnalytics().catch(function () { /* silent */ });
+            self.getDashboardAnalytics()
+                .then(function (data) {
+                    if (!data || !window.ViewCache) return;
+                    // Defensive: prefetch sirasinda logout olabilir
+                    if (!window.STATE || !window.STATE.tenant || !window.STATE.tenant.id) return;
+                    var tid = window.STATE.tenant.id;
+                    var start = (window.STATE.filters && window.STATE.filters.startDate) || '';
+                    var end   = (window.STATE.filters && window.STATE.filters.endDate)   || '';
+                    var cacheKey = 'dashboard:' + tid + ':' + start + ':' + end;
+                    try { window.ViewCache.set(cacheKey, data); } catch (e) { /* noop */ }
+                })
+                .catch(function () { /* silent */ });
         } catch (e) { /* never block login */ }
     },
 

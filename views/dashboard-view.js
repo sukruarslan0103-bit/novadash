@@ -75,28 +75,56 @@ window.DashboardView = {
             try { window.ViewCache.invalidate(cacheKey); } catch (e) { /* noop */ }
         }
 
-        var cached = (!force && window.ViewCache) ? window.ViewCache.get(cacheKey) : null;
+        // PERF (Faz 3.1): SWR — getWithMeta stale data'yi silmez.
+        // - FRESH: eski cache hit yolu (Faz 2.1)
+        // - STALE: instant render + background revalidate (yeni yol)
+        // force=true ise meta tamamen atlanir → fresh fetch.
+        var meta = (!force && window.ViewCache && window.ViewCache.getWithMeta)
+            ? window.ViewCache.getWithMeta(cacheKey)
+            : null;
 
-        if (cached) {
-            self.cachedData = cached;
+        if (meta && meta.fresh) {
+            // ESKI YOL: fresh cache hit (Faz 2.1 davranis)
+            self.cachedData = meta.data;
 
-            // PERF (Faz 2.1): Cache hit + same-sig + DOM stable → full innerHTML
-            // rebuild SKIP. Sadece chart in-place update (zaten no-op olur eger
-            // chart sig'i de aynı). Bu, "ilk render agir, sekme degisip
-            // donunce yine agir" hissinin ana cozumudur.
-            var newSig = self._computeRenderSig(cached);
+            var newSig = self._computeRenderSig(meta.data);
             var domStable = container.querySelector('.kpi-grid') !== null;
 
             if (self._lastRenderedSig === newSig && domStable) {
-                // Tam skip — chart'lar zaten same-sig guard'inda no-op olur
-                self.renderSalesChart(cached);
-                self.renderExpenseChart(cached);
+                // Tam skip — chart'lar zaten same-sig guard'inda no-op
+                self.renderSalesChart(meta.data);
+                self.renderExpenseChart(meta.data);
                 self._finishRender();
                 return;
             }
 
-            self.renderDashboard(container, cached);
+            self.renderDashboard(container, meta.data);
             self._lastRenderedSig = newSig;
+            self._finishRender();
+            return;
+        }
+
+        if (meta && meta.stale) {
+            // YENI YOL (Faz 3.1): stale-while-revalidate.
+            // 1) Stale data'yi INSTANT render et — "loading hissi" yok
+            self.cachedData = meta.data;
+
+            var newSigS = self._computeRenderSig(meta.data);
+            var domStableS = container.querySelector('.kpi-grid') !== null;
+
+            if (self._lastRenderedSig !== newSigS || !domStableS) {
+                self.renderDashboard(container, meta.data);
+                self._lastRenderedSig = newSigS;
+            } else {
+                // DOM zaten ayni stale data ile render edilmis — chart yeniden
+                // bind (no-op olabilir, defensive)
+                self.renderSalesChart(meta.data);
+                self.renderExpenseChart(meta.data);
+            }
+
+            // 2) Background revalidate (fire-and-forget)
+            self._revalidateInBackground(container, cacheKey);
+
             self._finishRender();
             return;
         }
@@ -139,6 +167,46 @@ window.DashboardView = {
         }
 
         self._finishRender();
+    },
+
+    // PERF (Faz 3.1): SWR background revalidate.
+    // Stale data immediate render edildikten sonra sessizce fresh fetch.
+    // _revalidating flag duplicate request engeller.
+    // View destroy edilirse callback no-op.
+    _revalidateInBackground: function (container, cacheKey) {
+        var self = window.DashboardView;
+        if (self._revalidating) return;
+        self._revalidating = true;
+
+        // Fire-and-forget — Promise hata atarsa silent fail (stale data zaten ekranda)
+        window.AnalyticsService.getDashboardAnalytics()
+            .then(function (fresh) {
+                self._revalidating = false;
+
+                // Defensive: view destroy edilmiş veya container değişmiş ise abort
+                if (!self._isActive || self.container !== container) return;
+
+                self.cachedData = fresh;
+                if (window.ViewCache) {
+                    window.ViewCache.set(cacheKey, fresh);
+                }
+
+                var newSig = self._computeRenderSig(fresh);
+                if (self._lastRenderedSig !== newSig) {
+                    // Data degisti → full re-render (rare case)
+                    self.renderDashboard(container, fresh);
+                    self._lastRenderedSig = newSig;
+                } else {
+                    // Data ayni → no-op (kullanici hicbir sey hissetmez)
+                    // Defensive chart sync (in-place no-op)
+                    self.renderSalesChart(fresh);
+                    self.renderExpenseChart(fresh);
+                }
+            })
+            .catch(function () {
+                self._revalidating = false;
+                // Silent fail — stale data zaten ekranda
+            });
     },
 
     _finishRender() {
@@ -255,9 +323,32 @@ window.DashboardView = {
             self._buildNabizCardHtml(data);
 
         self.bindGlobalKpiToggle();
-        self.renderSalesChart(data);
-        self.renderExpenseChart(data);
         self.updateHeaderWidgets(data);
+
+        // PERF (Faz 3.2): Chart init defer (cold path).
+        // - Warm path (chart instance VAR): in-place update sync — chart same-sig
+        //   guard zaten no-op verir; rAF defer gereksiz overhead.
+        // - Cold path (chart instance YOK): new Chart() init 150-300ms her biri,
+        //   main thread blocking. requestIdleCallback ile defer → First Usable
+        //   hemen, chart kisa sure sonra (kullanici hala dashboard'a bakiyor,
+        //   chart "fade in" gibi gorunur).
+        var hasCharts = window.STATE.charts.salesChart && window.STATE.charts.expenseChart;
+        if (hasCharts) {
+            // Warm: sync in-place
+            self.renderSalesChart(data);
+            self.renderExpenseChart(data);
+        } else {
+            // Cold: defer cold chart init.
+            // requestIdleCallback varsa idle window kullan, yoksa rAF fallback.
+            var deferFn = window.requestIdleCallback
+                ? function (cb) { return window.requestIdleCallback(cb, { timeout: 200 }); }
+                : function (cb) { return window.requestAnimationFrame(cb); };
+            deferFn(function () {
+                if (!self._isActive) return;
+                self.renderSalesChart(data);
+                self.renderExpenseChart(data);
+            });
+        }
     },
 
     // PERF (Faz 2.1): renderDashboard'dan extract — Kritik Uyarilar + En Cok
@@ -947,5 +1038,10 @@ window.DashboardView = {
         this._lastRenderedSig = null;
         this._lastSalesSig = null;
         this._lastExpenseSig = null;
+        // PERF (Faz 3.1): SWR revalidate flag reset.
+        // Background revalidate Promise hala calisirsa _isActive check ile
+        // callback no-op; flag burada temizlenir ki yeni render fresh state'le
+        // baslayabilsin.
+        this._revalidating = false;
     }
 };

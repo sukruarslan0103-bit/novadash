@@ -9,7 +9,9 @@ window.ViewCache = {
     _defaultTTL: 5 * 60 * 1000, // 5 dakika
 
     /**
-     * Cache'den veri al. TTL dolmuşsa null döner.
+     * Cache'den veri al. TTL dolmuşsa null döner (backward compat).
+     * Mevcut consumer'lar (sales/products/expenses) bu davranışı bekler:
+     * stale ise null → fresh fetch yolu.
      */
     get: function (key) {
         var entry = this._store[key];
@@ -19,6 +21,31 @@ window.ViewCache = {
             return null;
         }
         return entry.data;
+    },
+
+    /**
+     * PERF (Faz 3.1): SWR-friendly getter.
+     * Stale data'yi SILMEZ; consumer karar verir:
+     *   - fresh → normal cache hit
+     *   - stale → immediate render + background revalidate
+     *
+     * Mevcut get() backward compat — sadece dashboard-view şimdilik
+     * getWithMeta kullanir. Diger view'lar etkilenmez.
+     *
+     * Return: null (entry yok) veya { data, age, ttl, stale, fresh }.
+     */
+    getWithMeta: function (key) {
+        var entry = this._store[key];
+        if (!entry) return null;
+        var ttl = entry.ttl || this._defaultTTL;
+        var age = Date.now() - entry.time;
+        return {
+            data:  entry.data,
+            age:   age,
+            ttl:   ttl,
+            stale: age > ttl,
+            fresh: age <= ttl
+        };
     },
 
     /**

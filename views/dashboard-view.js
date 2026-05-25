@@ -58,10 +58,25 @@ window.DashboardView = {
                 self.render(self.container, true);   // ← force=true
             }
 
-            self._on(window, 'sales:updated', handleUpdate);
-            self._on(window, 'expenses:updated', handleUpdate);
-            self._on(window, 'products:updated', handleUpdate);
-            self._on(window, 'dashboard:refresh', handleUpdate);
+            // PERF (Faz 3.4): handleUpdate debounce — multi-event cascade
+            // koruması. Ardışık dispatch (sales:updated + expenses:updated +
+            // products:updated, örn. restore_full_backup veya hızlı multi-
+            // action) 300ms penceresi içinde TEK render'a merge edilir.
+            // Eskiden N event = N render denemesi (isRendering guard ile
+            // 2-4 RPC); şimdi N event = 1 RPC.
+            //
+            // handleUpdate body dokunulmadı. force=true / cache invalidate /
+            // pendingRefresh / SWR davranışı aynen korunuyor.
+            //
+            // window.debounce yoksa (eski JS load order) raw fallback.
+            var debouncedUpdate = (typeof window.debounce === 'function')
+                ? window.debounce(handleUpdate, 300)
+                : handleUpdate;
+
+            self._on(window, 'sales:updated',     debouncedUpdate);
+            self._on(window, 'expenses:updated',  debouncedUpdate);
+            self._on(window, 'products:updated',  debouncedUpdate);
+            self._on(window, 'dashboard:refresh', debouncedUpdate);
         }
 
         var tenantId = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';

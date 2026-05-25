@@ -316,6 +316,16 @@ window.Router = {
         }
 
         if (bootstrapOk && window.STATE && window.STATE.authenticated) {
+            // PERF (Faz 3.3-alt): Dashboard prefetch — fire-and-forget.
+            // Navigation hemen devam eder; RPC arkada baslar. DashboardView.
+            // render AYNI promise'i inflight share ile bekler → duplicate
+            // fetch storm engellenir, cold login latency ~150-200ms dusus.
+            // Auth lifecycle DOKUNULMADI; sadece bootstrap success sonrasi
+            // ek bir background fetch tetikleyici.
+            if (window.AnalyticsService && typeof window.AnalyticsService.prefetchDashboard === 'function') {
+                window.AnalyticsService.prefetchDashboard();
+            }
+
             // TEK-NAVIGATE GARANTISI.
             //
             // Hash override mantigi (safeNavigateToDashboard ile birebir):

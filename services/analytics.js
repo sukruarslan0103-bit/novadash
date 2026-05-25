@@ -540,7 +540,38 @@ window.AnalyticsService = {
        10+ ayrı sorgu yerine 1 RPC.
     ============================================================ */
 
+    // PERF (Faz 3.3-alt): Inflight share + prefetch.
+    // - Public getDashboardAnalytics(): inflight promise sharing wrapper.
+    //   Ayni anda iki cagri (orn. router prefetch + dashboard-view render)
+    //   AYNI promise'i bekler → TEK RPC. Duplicate fetch storm engellenir.
+    // - prefetchDashboard(): fire-and-forget helper, handleLogin success
+    //   path'inden cagirilir. Login sirasinda RPC arkada baslar; dashboard
+    //   render anlik cache hit veya kisa inflight wait yaparir.
+    // - Network failure'da .finally null reset → leak yok, next call fresh.
     async getDashboardAnalytics() {
+        if (this._inflightAnalytics) {
+            return this._inflightAnalytics;
+        }
+        var self = this;
+        this._inflightAnalytics = this._getDashboardAnalyticsCore()
+            .finally(function () { self._inflightAnalytics = null; });
+        return this._inflightAnalytics;
+    },
+
+    prefetchDashboard() {
+        // Fire-and-forget — caller await ETMEZ. Inflight promise yine
+        // share edilir; render gelirse await eder.
+        // Catch silent: prefetch failure render path'ini bozmaz, render
+        // kendi error handling'ini yapar.
+        var self = this;
+        try {
+            // STATE.tenant.id hazir olmali — handleLogin'den sonra cagrilir.
+            if (!window.STATE || !window.STATE.tenant || !window.STATE.tenant.id) return;
+            self.getDashboardAnalytics().catch(function () { /* silent */ });
+        } catch (e) { /* never block login */ }
+    },
+
+    async _getDashboardAnalyticsCore() {
         var self = this;
         var now = new Date();
 

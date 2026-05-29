@@ -189,10 +189,18 @@
         enable: function () {
             this.enabled = true;
             try { localStorage.setItem('NOVA_DEBUG', '1'); } catch (e) { /* noop */ }
+            // FAZ O1-B: panel button mount (enabled iken görünür)
+            if (this.panel && typeof this.panel._mountButton === 'function') {
+                this.panel._mountButton();
+            }
         },
         disable: function () {
             this.enabled = false;
             try { localStorage.removeItem('NOVA_DEBUG'); } catch (e) { /* noop */ }
+            // FAZ O1-B: panel + button unmount (timer cleanup dahil)
+            if (this.panel && typeof this.panel._unmountAll === 'function') {
+                this.panel._unmountAll();
+            }
         },
         toggle: function () {
             if (this.enabled) this.disable(); else this.enable();
@@ -257,7 +265,12 @@
                     total:   total
                 };
             }
-        }
+        },
+
+        // ─── PANEL (FAZ O1-B) ─────────────────────────────────
+        // Disabled iken DOM = 0, timer = 0. Sadece enabled + open'da
+        // resource tutar.
+        panel: null   // Faz O1-B IIFE'de doldurulacak
     };
 
     // ─── AUTO-ENABLE FROM SOURCES ────────────────────────────
@@ -287,11 +300,308 @@
             if (e.ctrlKey && e.shiftKey && (e.code === 'KeyD' || e.keyCode === 68)) {
                 e.preventDefault();
                 window.NOVA_DEBUG.toggle();
-                // Console feedback (panel olmadan kullanici durumunu gorsun)
+                // Console feedback
                 if (window.console && console.log) {
                     console.log('[NOVA_DEBUG] ' + (window.NOVA_DEBUG.enabled ? 'ENABLED' : 'DISABLED'));
                 }
             }
         }, false);
+    }
+})();
+
+
+/* ============================================================
+   NOVA_DEBUG.panel — Minimal Debug Panel UI (Faz O1-B)
+   Floating button (sağ alt) + collapsible 3-tab drawer.
+   Disabled iken DOM=0, timer=0.
+   ============================================================ */
+(function () {
+    'use strict';
+
+    if (!window.NOVA_DEBUG) return;
+    if (window.NOVA_DEBUG.panel && typeof window.NOVA_DEBUG.panel._mountButton === 'function') return; // idempotent
+
+    var panel = {
+        // ─── STATE ────────────────────────────────────────────
+        _button:      null,       // floating debug button DOM
+        _drawer:      null,       // expanded panel DOM
+        _refreshTimer: null,      // setInterval handle
+        _activeTab:   'cache',    // 'cache' | 'view' | 'rpc'
+        isOpen:       false,
+
+        // ─── PUBLIC API ───────────────────────────────────────
+        open: function () {
+            if (!window.NOVA_DEBUG.enabled) return;
+            if (this.isOpen) return;
+            this._mountDrawer();
+            this.isOpen = true;
+            this._startRefresh();
+            this._render();
+        },
+        close: function () {
+            if (!this.isOpen) return;
+            this._stopRefresh();
+            this._unmountDrawer();
+            this.isOpen = false;
+        },
+        toggle: function () {
+            if (this.isOpen) this.close(); else this.open();
+        },
+
+        // ─── INTERNAL: BUTTON LIFECYCLE ───────────────────────
+        _mountButton: function () {
+            if (this._button) return;
+            var btn = document.createElement('div');
+            btn.id = 'nova-debug-button';
+            btn.textContent = '⚙ DEBUG';
+            btn.style.cssText = [
+                'position:fixed', 'bottom:20px', 'right:20px',
+                'z-index:2147483646', 'padding:8px 14px',
+                'background:#0f172a', 'color:#e2e8f0',
+                'border:1px solid #334155', 'border-radius:8px',
+                'font:600 11px/1 ui-monospace,Consolas,Menlo,monospace',
+                'cursor:pointer', 'user-select:none',
+                'letter-spacing:.05em',
+                'box-shadow:0 4px 12px rgba(0,0,0,.3)',
+                'transition:transform .15s ease'
+            ].join(';');
+            btn.addEventListener('click', function () { panel.toggle(); });
+            btn.addEventListener('mouseenter', function () { btn.style.transform = 'translateY(-2px)'; });
+            btn.addEventListener('mouseleave', function () { btn.style.transform = 'translateY(0)'; });
+            document.body.appendChild(btn);
+            this._button = btn;
+        },
+
+        _unmountButton: function () {
+            if (this._button && this._button.parentNode) {
+                this._button.parentNode.removeChild(this._button);
+            }
+            this._button = null;
+        },
+
+        _unmountAll: function () {
+            this.close();
+            this._unmountButton();
+        },
+
+        // ─── INTERNAL: DRAWER LIFECYCLE ───────────────────────
+        _mountDrawer: function () {
+            if (this._drawer) return;
+            var d = document.createElement('div');
+            d.id = 'nova-debug-drawer';
+            d.style.cssText = [
+                'position:fixed', 'bottom:60px', 'right:20px',
+                'z-index:2147483647', 'width:380px', 'max-width:calc(100vw - 40px)',
+                'max-height:60vh', 'background:#0f172a', 'color:#e2e8f0',
+                'border:1px solid #334155', 'border-radius:10px',
+                'font:11px/1.5 ui-monospace,Consolas,Menlo,monospace',
+                'box-shadow:0 8px 32px rgba(0,0,0,.5)',
+                'overflow:hidden', 'display:flex', 'flex-direction:column'
+            ].join(';');
+            d.innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #1e293b;background:#020617;">' +
+                    '<div style="font-weight:700;letter-spacing:.08em;color:#10b981;">NOVA_DEBUG · O1-B</div>' +
+                    '<div id="nova-debug-close" style="cursor:pointer;color:#64748b;font-size:14px;padding:0 4px;">✕</div>' +
+                '</div>' +
+                '<div style="display:flex;border-bottom:1px solid #1e293b;background:#020617;">' +
+                    '<div data-tab="cache" class="nd-tab" style="flex:1;padding:8px;text-align:center;cursor:pointer;border-right:1px solid #1e293b;">CACHE</div>' +
+                    '<div data-tab="view" class="nd-tab" style="flex:1;padding:8px;text-align:center;cursor:pointer;border-right:1px solid #1e293b;">VIEW</div>' +
+                    '<div data-tab="rpc" class="nd-tab" style="flex:1;padding:8px;text-align:center;cursor:pointer;">RPC</div>' +
+                '</div>' +
+                '<div id="nova-debug-body" style="flex:1;overflow-y:auto;padding:12px;"></div>' +
+                '<div style="padding:6px 12px;font-size:10px;color:#475569;border-top:1px solid #1e293b;background:#020617;">' +
+                    'refresh: 1s · disable: Ctrl+Shift+D' +
+                '</div>';
+
+            // Tab click handlers
+            var tabs = d.querySelectorAll('.nd-tab');
+            for (var i = 0; i < tabs.length; i++) {
+                (function (tab) {
+                    tab.addEventListener('click', function () {
+                        panel._activeTab = tab.getAttribute('data-tab');
+                        panel._render();
+                    });
+                })(tabs[i]);
+            }
+
+            // Close button
+            d.querySelector('#nova-debug-close').addEventListener('click', function () {
+                panel.close();
+            });
+
+            document.body.appendChild(d);
+            this._drawer = d;
+        },
+
+        _unmountDrawer: function () {
+            if (this._drawer && this._drawer.parentNode) {
+                this._drawer.parentNode.removeChild(this._drawer);
+            }
+            this._drawer = null;
+        },
+
+        // ─── INTERNAL: TIMER ──────────────────────────────────
+        _startRefresh: function () {
+            if (this._refreshTimer) return;
+            var self = this;
+            this._refreshTimer = setInterval(function () {
+                if (!self.isOpen || !window.NOVA_DEBUG.enabled) {
+                    self._stopRefresh();
+                    return;
+                }
+                self._render();
+            }, 1000);
+        },
+
+        _stopRefresh: function () {
+            if (this._refreshTimer) {
+                clearInterval(this._refreshTimer);
+                this._refreshTimer = null;
+            }
+        },
+
+        // ─── INTERNAL: RENDER ─────────────────────────────────
+        _render: function () {
+            if (!this._drawer) return;
+            var body = this._drawer.querySelector('#nova-debug-body');
+            if (!body) return;
+
+            // Tab active style
+            var tabs = this._drawer.querySelectorAll('.nd-tab');
+            for (var i = 0; i < tabs.length; i++) {
+                var isActive = tabs[i].getAttribute('data-tab') === this._activeTab;
+                tabs[i].style.background = isActive ? '#1e293b' : 'transparent';
+                tabs[i].style.color      = isActive ? '#10b981' : '#94a3b8';
+                tabs[i].style.fontWeight = isActive ? '700' : '500';
+            }
+
+            if (this._activeTab === 'cache') {
+                body.innerHTML = this._renderCacheTab();
+            } else if (this._activeTab === 'view') {
+                body.innerHTML = this._renderViewTab();
+            } else if (this._activeTab === 'rpc') {
+                body.innerHTML = this._renderRpcTab();
+            }
+        },
+
+        _escape: function (s) {
+            return String(s).replace(/[&<>"]/g, function (c) {
+                return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
+            });
+        },
+
+        _row: function (label, value, valueColor) {
+            return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1e293b;">' +
+                '<span style="color:#64748b;">' + this._escape(label) + '</span>' +
+                '<span style="color:' + (valueColor || '#e2e8f0') + ';font-weight:600;">' + this._escape(value) + '</span>' +
+                '</div>';
+        },
+
+        _renderCacheTab: function () {
+            var snap = window.NOVA_DEBUG.cache.snapshot();
+            var total = snap.hits + snap.misses + snap.staleHits;
+            var ratioPct = total > 0 ? Math.round(snap.ratio * 100) : 0;
+            var ratioColor = ratioPct >= 70 ? '#10b981' : ratioPct >= 40 ? '#f59e0b' : '#ef4444';
+            return '' +
+                this._row('Hits',        snap.hits) +
+                this._row('Misses',      snap.misses) +
+                this._row('Stale Hits',  snap.staleHits) +
+                this._row('Hit Ratio',   ratioPct + '%', ratioColor) +
+                this._row('Sets',        snap.sets) +
+                this._row('Invalidates', snap.invalidates) +
+                this._row('Active Keys', snap.activeKeys);
+        },
+
+        _renderViewTab: function () {
+            var snap = window.NOVA_DEBUG.view.snapshot();
+            var html = '' +
+                this._row('Active View',   snap.active || '—', '#10b981') +
+                this._row('Total Renders', snap.total) +
+                '<div style="margin-top:10px;color:#475569;font-size:10px;letter-spacing:.05em;">PER-VIEW</div>';
+
+            var keys = Object.keys(snap.renders);
+            if (keys.length === 0) {
+                return html + '<div style="color:#475569;padding:4px 0;">(henüz render yok)</div>';
+            }
+            keys.sort(function (a, b) { return snap.renders[b] - snap.renders[a]; });
+            for (var i = 0; i < keys.length; i++) {
+                html += this._row(keys[i], snap.renders[keys[i]]);
+            }
+            return html;
+        },
+
+        _renderRpcTab: function () {
+            // Mevcut RpcObserver.summary() console.table çıktısı + array döner.
+            // Burada array'i alıp top-N render edeceğiz.
+            // Direkt __rpcStats'tan bucket compute — summary console'a basıyor; bypass.
+            if (!window.__rpcStats || window.__rpcStats.length === 0) {
+                return '<div style="color:#475569;">(henüz RPC kaydı yok)</div>';
+            }
+
+            var bucket = {};
+            for (var i = 0; i < window.__rpcStats.length; i++) {
+                var e = window.__rpcStats[i];
+                if ((e.kind || 'rpc') !== 'rpc') continue;
+                if (!bucket[e.name]) bucket[e.name] = { ok: [], fail: 0 };
+                if (e.success) bucket[e.name].ok.push(e.duration_ms);
+                else bucket[e.name].fail++;
+            }
+
+            var rows = [];
+            var names = Object.keys(bucket);
+            for (var j = 0; j < names.length; j++) {
+                var name = names[j];
+                var arr = bucket[name].ok.slice().sort(function (a, b) { return a - b; });
+                var n = arr.length;
+                rows.push({
+                    name:  name,
+                    count: n,
+                    fail:  bucket[name].fail,
+                    p95:   n > 0 ? arr[Math.max(0, Math.floor(n * 0.95) - 1)] : 0,
+                    p50:   n > 0 ? arr[Math.floor(n * 0.5)] : 0
+                });
+            }
+            rows.sort(function (a, b) { return b.count - a.count; });
+
+            var html = '<div style="display:flex;color:#475569;font-size:10px;letter-spacing:.05em;padding:4px 0;border-bottom:1px solid #1e293b;">' +
+                '<div style="flex:1;">NAME</div>' +
+                '<div style="width:50px;text-align:right;">COUNT</div>' +
+                '<div style="width:55px;text-align:right;">P50</div>' +
+                '<div style="width:55px;text-align:right;">P95</div>' +
+                '</div>';
+
+            var limit = Math.min(rows.length, 12);
+            for (var k = 0; k < limit; k++) {
+                var r = rows[k];
+                var p95color = r.p95 >= 500 ? '#ef4444' : r.p95 >= 250 ? '#f59e0b' : '#10b981';
+                var shortName = r.name.length > 30 ? r.name.substring(0, 28) + '..' : r.name;
+                html += '<div style="display:flex;padding:4px 0;border-bottom:1px solid #1e293b;">' +
+                    '<div style="flex:1;color:#e2e8f0;" title="' + this._escape(r.name) + '">' + this._escape(shortName) + '</div>' +
+                    '<div style="width:50px;text-align:right;color:#e2e8f0;font-weight:600;">' + r.count + '</div>' +
+                    '<div style="width:55px;text-align:right;color:#94a3b8;">' + r.p50 + 'ms</div>' +
+                    '<div style="width:55px;text-align:right;color:' + p95color + ';font-weight:600;">' + r.p95 + 'ms</div>' +
+                    '</div>';
+            }
+
+            if (rows.length > limit) {
+                html += '<div style="color:#475569;font-size:10px;padding:6px 0 0 0;">+' + (rows.length - limit) + ' more RPC</div>';
+            }
+            return html;
+        }
+    };
+
+    // NOVA_DEBUG.panel'a assign
+    window.NOVA_DEBUG.panel = panel;
+
+    // Eger sayfa load'da zaten enabled ise button mount et
+    if (window.NOVA_DEBUG.enabled) {
+        // DOM hazır olmali — defensive
+        if (document.body) {
+            panel._mountButton();
+        } else {
+            document.addEventListener('DOMContentLoaded', function () {
+                if (window.NOVA_DEBUG.enabled) panel._mountButton();
+            });
+        }
     }
 })();

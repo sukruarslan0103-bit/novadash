@@ -15,11 +15,20 @@ window.ViewCache = {
      */
     get: function (key) {
         var entry = this._store[key];
-        if (!entry) return null;
-        if (Date.now() - entry.time > (entry.ttl || this._defaultTTL)) {
-            delete this._store[key];
+        if (!entry) {
+            // NOVA_DEBUG (Faz O1-A): miss counter
+            if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.misses++;
             return null;
         }
+        if (Date.now() - entry.time > (entry.ttl || this._defaultTTL)) {
+            delete this._store[key];
+            // get() backward compat: stale → silinir + null. Counter: miss
+            // (mevcut consumer'lar bunu miss olarak gormeli; staleHit sadece
+            // getWithMeta'da semantik fark eder).
+            if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.misses++;
+            return null;
+        }
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.hits++;
         return entry.data;
     },
 
@@ -36,15 +45,23 @@ window.ViewCache = {
      */
     getWithMeta: function (key) {
         var entry = this._store[key];
-        if (!entry) return null;
+        if (!entry) {
+            if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.misses++;
+            return null;
+        }
         var ttl = entry.ttl || this._defaultTTL;
         var age = Date.now() - entry.time;
+        var isStale = age > ttl;
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) {
+            if (isStale) window.NOVA_DEBUG.cache.staleHits++;
+            else         window.NOVA_DEBUG.cache.hits++;
+        }
         return {
             data:  entry.data,
             age:   age,
             ttl:   ttl,
-            stale: age > ttl,
-            fresh: age <= ttl
+            stale: isStale,
+            fresh: !isStale
         };
     },
 
@@ -57,6 +74,7 @@ window.ViewCache = {
             time: Date.now(),
             ttl: ttl || this._defaultTTL
         };
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.sets++;
         this._cleanup();
     },
 
@@ -69,6 +87,7 @@ window.ViewCache = {
     },
 
     invalidate: function (prefix) {
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) window.NOVA_DEBUG.cache.invalidates++;
         if (!prefix) {
             this._store = {};
             return;

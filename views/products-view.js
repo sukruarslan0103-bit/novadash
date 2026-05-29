@@ -110,6 +110,8 @@ window.ProductsView = {
     _puLineKey: 1,
 
     async render(container) {
+        // NOVA_DEBUG (Faz O1-A): view render tracker
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.view) window.NOVA_DEBUG.view.track('products');
         this._isActive = true;
         this._activeTab = 'products';
         this._tabsRendered = { 'raw-materials': false, 'purchase': false };

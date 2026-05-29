@@ -25,6 +25,8 @@ window.SalesView = {
     _isActive: false,
 
     async render(container) {
+        // NOVA_DEBUG (Faz O1-A): view render tracker
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.view) window.NOVA_DEBUG.view.track('sales');
         this._isActive = true;
 
         const fmt = window.Formatters;

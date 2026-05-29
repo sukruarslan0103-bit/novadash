@@ -164,3 +164,134 @@
         }
     };
 })();
+
+
+/* ============================================================
+   NOVA_DEBUG — Observability Foundation (Faz O1-A)
+   Developer-only runtime visibility. Disabled by default.
+   Activation:
+     - URL ?debug=1
+     - localStorage.NOVA_DEBUG = '1'
+     - Ctrl+Shift+D hotkey (runtime toggle)
+   Production-safe: disabled mode overhead ~0 (boolean check + early return).
+   Panel UI: FAZ O1-B'de (ayri commit).
+   ============================================================ */
+(function () {
+    'use strict';
+
+    if (window.NOVA_DEBUG) return;   // idempotent (script multi-load koruma)
+
+    window.NOVA_DEBUG = {
+        version: 'O1-A',
+        enabled: false,
+
+        // ─── CORE ─────────────────────────────────────────────
+        enable: function () {
+            this.enabled = true;
+            try { localStorage.setItem('NOVA_DEBUG', '1'); } catch (e) { /* noop */ }
+        },
+        disable: function () {
+            this.enabled = false;
+            try { localStorage.removeItem('NOVA_DEBUG'); } catch (e) { /* noop */ }
+        },
+        toggle: function () {
+            if (this.enabled) this.disable(); else this.enable();
+            return this.enabled;
+        },
+
+        // ─── RPC (backward-compat bridge) ─────────────────────
+        // window.RpcObserver yukarida mevcut; alias.
+        rpc: window.RpcObserver || null,
+
+        // ─── CACHE ────────────────────────────────────────────
+        cache: {
+            hits: 0,
+            misses: 0,
+            staleHits: 0,
+            sets: 0,
+            invalidates: 0,
+            reset: function () {
+                this.hits = 0;
+                this.misses = 0;
+                this.staleHits = 0;
+                this.sets = 0;
+                this.invalidates = 0;
+            },
+            snapshot: function () {
+                var total = this.hits + this.misses + this.staleHits;
+                return {
+                    hits:        this.hits,
+                    misses:      this.misses,
+                    staleHits:   this.staleHits,
+                    sets:        this.sets,
+                    invalidates: this.invalidates,
+                    ratio:       total > 0 ? Math.round((this.hits + this.staleHits) / total * 100) / 100 : 0,
+                    activeKeys:  (window.ViewCache && window.ViewCache._store)
+                                    ? Object.keys(window.ViewCache._store).length : 0
+                };
+            }
+        },
+
+        // ─── VIEW ─────────────────────────────────────────────
+        view: {
+            renders: {},
+            active:  null,
+            track: function (name) {
+                // KRITIK: disabled mode'da bu fn cagrilir ama erken donus.
+                if (!window.NOVA_DEBUG.enabled) return;
+                if (!name) return;
+                this.renders[name] = (this.renders[name] || 0) + 1;
+                this.active = name;
+            },
+            reset: function () {
+                this.renders = {};
+                this.active = null;
+            },
+            snapshot: function () {
+                var total = 0;
+                var keys = Object.keys(this.renders);
+                for (var i = 0; i < keys.length; i++) total += this.renders[keys[i]];
+                return {
+                    renders: Object.assign({}, this.renders),
+                    active:  this.active,
+                    total:   total
+                };
+            }
+        }
+    };
+
+    // ─── AUTO-ENABLE FROM SOURCES ────────────────────────────
+    try {
+        // 1) URL ?debug=1
+        if (typeof window.location !== 'undefined') {
+            var qs = window.location.search || '';
+            if (qs.indexOf('debug=1') !== -1) {
+                window.NOVA_DEBUG.enabled = true;
+            }
+        }
+        // 2) localStorage flag
+        if (!window.NOVA_DEBUG.enabled) {
+            try {
+                if (localStorage.getItem('NOVA_DEBUG') === '1') {
+                    window.NOVA_DEBUG.enabled = true;
+                }
+            } catch (e) { /* private mode etc */ }
+        }
+    } catch (e) { /* never throw at load */ }
+
+    // ─── HOTKEY: Ctrl+Shift+D ────────────────────────────────
+    // Production-safe: kullanici hotkey bilmedikce panel acilmaz.
+    // FAZ O1-A: sadece toggle enable; panel UI FAZ O1-B'de eklenecek.
+    if (typeof window.addEventListener === 'function') {
+        window.addEventListener('keydown', function (e) {
+            if (e.ctrlKey && e.shiftKey && (e.code === 'KeyD' || e.keyCode === 68)) {
+                e.preventDefault();
+                window.NOVA_DEBUG.toggle();
+                // Console feedback (panel olmadan kullanici durumunu gorsun)
+                if (window.console && console.log) {
+                    console.log('[NOVA_DEBUG] ' + (window.NOVA_DEBUG.enabled ? 'ENABLED' : 'DISABLED'));
+                }
+            }
+        }, false);
+    }
+})();

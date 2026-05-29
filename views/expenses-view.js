@@ -38,6 +38,8 @@ window.ExpensesView = {
     },
 
     async render(container) {
+        // NOVA_DEBUG (Faz O1-A): view render tracker
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.view) window.NOVA_DEBUG.view.track('expenses');
         this._isActive = true;
         this.container = container;
 

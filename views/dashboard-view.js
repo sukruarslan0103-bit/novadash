@@ -17,6 +17,8 @@ window.DashboardView = {
 
     async render(container, force) {
         var self = window.DashboardView;
+        // NOVA_DEBUG (Faz O1-A): view render tracker (early-return if disabled)
+        if (window.NOVA_DEBUG && window.NOVA_DEBUG.view) window.NOVA_DEBUG.view.track('dashboard');
         self._isActive = true;
         force = !!force;
 

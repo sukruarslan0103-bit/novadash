@@ -1250,6 +1250,149 @@ body::before {
 }
 
 /* ========================
+   FAZ M1-B: PRODUCTS ADAPTIVE CARD MODE (mobile only)
+   ========================
+   Desktop'ta (>768px) hicbir etki yok — sadece data-table-wrap'in normal
+   davranisi calisir. Mobilde (<=768px) products tablosunun her <tr> satiri
+   2-kolon CSS Grid karta donusur. JS/HTML uretim mantigi DEGISMEDI; sadece
+   .products-card-mode scope class'i ekli. Pure CSS, sifir interaction
+   handler, sifir DOM mutation. */
+@media (max-width: 768px) {
+    /* Wrapper'in chrome'unu temizle — kartlar kendi gorseline sahip */
+    .products-card-mode {
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        overflow-x: visible;
+    }
+
+    /* Table semantigini block'a cevir */
+    .products-card-mode .data-table,
+    .products-card-mode .data-table tbody,
+    .products-card-mode .data-table tr,
+    .products-card-mode .data-table td {
+        display: block;
+        width: 100%;
+    }
+
+    /* Thead gizli — sort icin sayfa ustundeki dropdown (productSort) var */
+    .products-card-mode .data-table thead { display: none; }
+
+    /* Her satir = kart */
+    .products-card-mode .data-table tbody tr {
+        background: var(--card);
+        border: 1px solid var(--border-light);
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 12px;
+    }
+    .products-card-mode .data-table tbody tr:hover { background: var(--card); }
+    .products-card-mode .data-table tbody tr:last-child td { border-bottom: none; }
+
+    /* Default cell — minimal padding, border-bottom yok */
+    .products-card-mode .data-table tbody td {
+        padding: 2px 0;
+        border-bottom: none;
+        font-size: 0.95rem;
+    }
+
+    /* Mobilde gizlenen kolonlar (oncelik dusuk — sort/filter dropdown'da var):
+       2=Kategori, 4=Maliyet, 7=Satis Adedi, 8=Ciro, 9=Tahmini Kar,
+       10=Performans, 11=Durum (inactive opacity'den anlasilir) */
+    .products-card-mode .data-table tbody td:nth-child(2),
+    .products-card-mode .data-table tbody td:nth-child(4),
+    .products-card-mode .data-table tbody td:nth-child(7),
+    .products-card-mode .data-table tbody td:nth-child(8),
+    .products-card-mode .data-table tbody td:nth-child(9),
+    .products-card-mode .data-table tbody td:nth-child(10),
+    .products-card-mode .data-table tbody td:nth-child(11) {
+        display: none;
+    }
+
+    /* 1. Urun adi + "Maliyetsiz" badge — full width, header tone */
+    .products-card-mode .data-table tbody td:nth-child(1) {
+        grid-column: 1 / -1;
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        padding-bottom: 8px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border-light);
+        line-height: 1.35;
+    }
+
+    /* 3. Satis Tutari — sol, brand vurgusu, kucuk label ile */
+    .products-card-mode .data-table tbody td:nth-child(3) {
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: var(--primary);
+    }
+    .products-card-mode .data-table tbody td:nth-child(3)::before {
+        content: 'Satış';
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 2px;
+    }
+
+    /* 5. Kar Marji — sag, color-coded (inline style ile geliyor) */
+    .products-card-mode .data-table tbody td:nth-child(5) {
+        font-size: 1.05rem;
+        text-align: right;
+    }
+    .products-card-mode .data-table tbody td:nth-child(5)::before {
+        content: 'Kar';
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 2px;
+        text-align: right;
+    }
+
+    /* 6. Kar Orani — sol alt, ikincil vurgu */
+    .products-card-mode .data-table tbody td:nth-child(6) {
+        font-size: 0.85rem;
+        font-weight: 700;
+    }
+    .products-card-mode .data-table tbody td:nth-child(6)::before {
+        content: 'Marj';
+        display: block;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 2px;
+    }
+
+    /* 12. Islemler — full width, alt, ust border separator */
+    .products-card-mode .data-table tbody td:nth-child(12) {
+        grid-column: 1 / -1;
+        padding-top: 10px;
+        margin-top: 6px;
+        border-top: 1px solid var(--border-light);
+    }
+
+    /* Empty/loading state row — colspan=12 → tek td → full kart icinde
+       de okunabilir kalsin */
+    .products-card-mode .data-table tbody td[colspan] {
+        grid-column: 1 / -1;
+        display: block !important;
+        text-align: center;
+    }
+}
+
+/* ========================
    ANIMATIONS
    ======================== */
 @keyframes fadeInUp {

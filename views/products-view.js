@@ -251,7 +251,7 @@ window.ProductsView = {
 
             <div id="productsStatus" style="margin:16px 0;"></div>
 
-            <div class="data-table-wrap">
+            <div class="data-table-wrap products-card-mode">
                 <table class="data-table">
                     <thead>
                         <tr>

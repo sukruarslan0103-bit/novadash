@@ -2125,7 +2125,20 @@ window.ProductsView = {
         this.setRecipeButtonEnabled(true);
 
         this.toggleForm(true);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // FAZ M2-C: Mobile (<=768px) scroll-jump fix.
+        // Önceden: 'Düzenle' tıklayinca window.scrollTo({top:0}) sayfayi
+        // KPI'larin ustune firlatiyordu. Mobile'da kullanici "Modal ekranin
+        // mevcut pozisyonunda acilmali" beklentisiyle bunu bug olarak
+        // algiladi. Aslinda 'Düzenle' modal degil, inline form (#productForm)
+        // doldurma akisi. Desktop'ta scroll-to-top isteniyor (form sayfa
+        // basinda). Mobile'da scroll-jump yok → form sessizce dolar, kullanici
+        // pozisyonunda kalir. Form'un nerede oldugunu bilmek icin status hint
+        // setStatus ile bildirilir.
+        if (!window.matchMedia || !window.matchMedia('(max-width: 768px)').matches) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+            this.setStatus('Ürün düzenleme formu yukarıda hazır.', 'info');
+        }
     },
 
     openRecipeForCurrentEditing: function () {

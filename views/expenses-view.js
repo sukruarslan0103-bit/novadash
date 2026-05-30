@@ -1220,6 +1220,8 @@ window.ExpensesView = {
         }
 
         return '' +
+            // FAZ M1-A: mobil yatay scroll wrapper (sales-view pattern)
+            '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">' +
             '<table class="product-table">' +
                 '<thead>' +
                     '<tr>' +
@@ -1252,7 +1254,8 @@ window.ExpensesView = {
                             '</tr>';
                     }).join('') +
                 '</tbody>' +
-            '</table>';
+            '</table>' +
+            '</div>';   // FAZ M1-A: close overflow-x wrapper
     },
 
     buildMonthlySummaryTable() {
@@ -1264,6 +1267,8 @@ window.ExpensesView = {
         }
 
         return '' +
+            // FAZ M1-A: mobil yatay scroll wrapper (sales-view pattern)
+            '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">' +
             '<table class="product-table">' +
                 '<thead>' +
                     '<tr>' +
@@ -1286,7 +1291,8 @@ window.ExpensesView = {
                             '</tr>';
                     }).join('') +
                 '</tbody>' +
-            '</table>';
+            '</table>' +
+            '</div>';   // FAZ M1-A: close overflow-x wrapper
     },
 
     buildExpenseModal() {

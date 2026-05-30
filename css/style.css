@@ -1192,7 +1192,14 @@ body::before {
 
 .data-table-wrap {
     background: var(--card); border-radius: var(--radius);
-    box-shadow: var(--shadow); border: 1px solid var(--border-light); overflow: hidden;
+    box-shadow: var(--shadow); border: 1px solid var(--border-light);
+    /* FAZ M1-A: overflow:hidden → overflow-x:auto. Mobilde (375-430px) 12
+       sütunlu products tablosu yatay scroll'la okunur hale gelir. Desktop'ta
+       tablo zaten kapsayıcıya sığar → scroll bar görünmez (auto). iOS Safari
+       momentum scroll icin -webkit-overflow-scrolling. Border-radius köşeleri
+       hala overflow'u clip eder. */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .data-table { width: 100%; border-collapse: collapse; }

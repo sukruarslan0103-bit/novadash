@@ -1414,6 +1414,124 @@ body::before {
     }
 }
 
+/* ============================================================
+   FAZ M2-A: MOBILE MODAL POLISH (bottom-sheet pattern)
+   ============================================================
+   Mevcut modal'lar inline-styled (productsModalOverlay, productsRecipeOverlay,
+   rmHistoryOverlay, expenseModalOverlay, expenseViewModalOverlay,
+   expenseConfirmModalOverlay). Mobile <=768px:
+   - Overlay → align-items: flex-end (modal alttan dock)
+   - Modal shell → full-width, top-radius only, max-height: 92dvh (dynamic
+     viewport → keyboard acilinca otomatik kuculur)
+   - overflow-y: auto + iOS momentum + overscroll-behavior: contain
+   - Sticky bottom action zone (products + expense-confirm) — son div sticky
+   - Safe-area padding-bottom — iOS home indicator CTA'yi ortmez
+   Tum inline style'lar !important ile override. JS/HTML degismedi.
+   Desktop (>768px): SIFIR etki. */
+@media (max-width: 768px) {
+    /* OVERLAYS — bottom-sheet positioning */
+    #productsModalOverlay,
+    #productsRecipeOverlay,
+    #rmHistoryOverlay,
+    #expenseModalOverlay,
+    #expenseViewModalOverlay,
+    #expenseConfirmModalOverlay {
+        padding: 0 !important;
+        align-items: flex-end !important;
+    }
+
+    /* MODAL SHELLS — full-width, top-radius, scrollable, keyboard-aware */
+    #productsModalOverlay > div,
+    #rmHistoryOverlay > div,
+    #expenseModalOverlay > div,
+    #expenseViewModalOverlay > div,
+    #expenseConfirmModalOverlay > div {
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: 92dvh !important;
+        border-radius: 20px 20px 0 0 !important;
+        margin: 0 !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior: contain !important;
+        box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.16),
+                    0 -2px 6px rgba(15, 23, 42, 0.06) !important;
+    }
+
+    /* RECIPE modal — zaten flex-column + max-height managed yapida;
+       sadece full-width + top-radius + safe-area uygula. Ic scroll
+       (recipe-pane overflow-y:auto) korunur. */
+    #productsRecipeOverlay > div {
+        max-width: 100% !important;
+        width: 100% !important;
+        max-height: calc(100dvh - 12px) !important;
+        border-radius: 20px 20px 0 0 !important;
+        margin: 0 !important;
+        box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.16),
+                    0 -2px 6px rgba(15, 23, 42, 0.06) !important;
+        padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    }
+
+    /* STICKY BOTTOM ACTION ZONE — son direct-child div (action row)
+       sticky bottom. Subtle ust shadow + safe-area padding.
+       Sadece confirm/input modal'lari (form-heavy modal'larda DOM farkli
+       olabilir, ona dokunmuyoruz). */
+    #productsModalOverlay > div > div:last-child,
+    #expenseConfirmModalOverlay > div > div:last-child {
+        position: sticky !important;
+        bottom: 0 !important;
+        background: #ffffff !important;
+        padding: 16px 22px calc(16px + env(safe-area-inset-bottom, 0px)) 22px !important;
+        border-top: 1px solid #e2e8f0 !important;
+        box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.04) !important;
+        z-index: 2;
+    }
+
+    /* PRODUCT modal — input area spacing (input nefes alsin) */
+    #productsModalBody {
+        padding: 18px 22px 8px 22px !important;
+    }
+    #productsModalInputLabel {
+        font-size: 14px !important;
+        margin-bottom: 10px !important;
+    }
+    #productsModalInput {
+        padding: 14px 16px !important;
+        font-size: 16px !important; /* iOS auto-zoom prevent */
+    }
+
+    /* PRODUCT modal header — biraz daha nefes */
+    #productsModalOverlay > div > div:first-child {
+        padding: 22px 22px 16px 22px !important;
+    }
+    #productsModalTitle {
+        font-size: 19px !important;
+        letter-spacing: -0.01em;
+    }
+    #productsModalMessage {
+        margin-top: 10px !important;
+        line-height: 1.6 !important;
+    }
+
+    /* EXPENSE modal body padding (form areas) */
+    #expenseModalOverlay > div,
+    #expenseViewModalOverlay > div {
+        padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    /* iOS — form input auto-zoom prevent (font-size >= 16px) */
+    #productsModalOverlay input,
+    #productsModalOverlay textarea,
+    #productsModalOverlay select,
+    #expenseModalOverlay input,
+    #expenseModalOverlay textarea,
+    #expenseModalOverlay select,
+    #productsRecipeOverlay input:not(.recipe-qty-input),
+    #productsRecipeOverlay textarea {
+        font-size: 16px !important;
+    }
+}
+
 /* ========================
    ANIMATIONS
    ======================== */

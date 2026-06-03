@@ -558,17 +558,20 @@ window.ProductsView = {
         if (!this._dataEventsBound) {
             this._dataEventsBound = true;
             var self = this;
-            this._on(window, 'products:updated', async function () {
+            // STABILIZE (Faz S-A): event storm containment. restore_full_backup
+            // hem products:updated hem sales:updated fire eder → eskiden 2
+            // parallel loadProducts (cift RPC + stale overwrite riski). Iki
+            // event TEK debounced reload'a merge edilir (dashboard idiom).
+            var reloadProducts = function () {
                 if (!self._isActive) return;
-                await self.loadProducts();
-                if (!self._isActive) return;
-            });
+                self.loadProducts();
+            };
+            var debouncedReload = (typeof window.debounce === 'function')
+                ? window.debounce(reloadProducts, 300)
+                : reloadProducts;
+            this._on(window, 'products:updated', debouncedReload);
             // Satis sonrasi performanceMap'in stale kalmamasi icin yeniden yukle.
-            this._on(window, 'sales:updated', async function () {
-                if (!self._isActive) return;
-                await self.loadProducts();
-                if (!self._isActive) return;
-            });
+            this._on(window, 'sales:updated', debouncedReload);
         }
     },
 

@@ -23,6 +23,10 @@ window.SalesView = {
     _salesUpdatedHandler: null,
     _listeners: [],
     _isActive: false,
+    // STABILIZE (Faz S-A): inflight token — eszamanli loadData cagrilarinda
+    // sadece en yeni cagri state commit eder (stale overwrite / last-finisher
+    // -wins korumasi).
+    _loadToken: 0,
 
     async render(container) {
         // NOVA_DEBUG (Faz O1-A): view render tracker
@@ -330,7 +334,7 @@ window.SalesView = {
         this._on(reportsClose, 'click', function () { self.closeReports(); });
         this._on(reportsModal, 'click', function (e) { if (e.target === reportsModal) self.closeReports(); });
 
-        this._salesUpdatedHandler = function () {
+        var salesUpdatedRaw = function () {
             self._lastFetchKey = '';
             self.salesData = [];
             self.productSalesData = [];
@@ -340,6 +344,14 @@ window.SalesView = {
             }
             self.loadData(true);
         };
+        // STABILIZE (Faz S-A): event debounce. restore_full_backup ve hizli
+        // ardisik mutation'lar cok sayida sales:updated fire edebilir; 300ms
+        // penceresinde TEK loadData'ya merge edilir (dashboard-view idiom).
+        // loadData icindeki inflight token, manuel loadData (filtre) ile
+        // yarisi da guvene alir.
+        this._salesUpdatedHandler = (typeof window.debounce === 'function')
+            ? window.debounce(salesUpdatedRaw, 300)
+            : salesUpdatedRaw;
 
         this._on(window, 'sales:updated', this._salesUpdatedHandler);
     },
@@ -398,13 +410,17 @@ window.SalesView = {
 
     async loadData(forceRefresh) {
         var fetchKey = this._buildFetchKey();
+        // STABILIZE (Faz S-A): inflight token. Her loadData monotonik bir
+        // token alir; await sonrasi token degismisse (daha yeni load basladi)
+        // eski load state COMMIT ETMEZ → stale overwrite cozulur.
+        var token = ++this._loadToken;
 
         // Gerçek cache kontrolü
         if (!forceRefresh && window.ViewCache) {
             var cached = window.ViewCache.get(fetchKey);
             if (cached) {
                 await this.loadProducts();
-                if (!this._isActive) return;
+                if (!this._isActive || token !== this._loadToken) return;
                 this._applyCachedPayload(cached, fetchKey);
                 // PERF (Faz 2.3): Data versiyonu artir — render guard'lar
                 // (renderTable sig, getMonthlyRows memo) bunu okuyor.
@@ -419,7 +435,7 @@ window.SalesView = {
 
         try {
             await this.loadProducts();
-            if (!this._isActive) return;
+            if (!this._isActive || token !== this._loadToken) return;
 
             var result;
 
@@ -434,7 +450,7 @@ window.SalesView = {
                 );
             }
 
-            if (!this._isActive) return;
+            if (!this._isActive || token !== this._loadToken) return;
 
             if (result.error) {
                 this.salesData = [];
@@ -455,11 +471,11 @@ window.SalesView = {
             // Eski product_sales fetch + _costMap rebuild'e ihtiyaç yok — getDailyRows direkt sale.cost / sale.profit okuyor.
             // Geriye uyumluluk için _costMap boş kalır; getCostBySaleId fallback'i 0 döner ama RPC değerleri kullanılır.
 
-            if (!this._isActive) return;
+            if (!this._isActive || token !== this._loadToken) return;
 
             if (this.viewMode === 'daily') {
                 await this.loadKpiTotals();
-                if (!this._isActive) return;
+                if (!this._isActive || token !== this._loadToken) return;
             } else {
                 this._kpiTotals = null;
             }
@@ -476,6 +492,9 @@ window.SalesView = {
             this.clearStatus();
         } catch (err) {
             console.error('Sales load error:', err);
+            // STABILIZE (Faz S-A): stale/iptal edilmis load'in hata state'i
+            // taze veriyi ezmesin.
+            if (!this._isActive || token !== this._loadToken) return;
             this.salesData = [];
             this.productSalesData = [];
             this.totalCount = 0;

@@ -20,6 +20,10 @@ window.ExpensesView = {
     _listeners: [],
     _isActive: false,
     _skeletonMounted: false,
+    // STABILIZE (Faz S-A): inflight token — eszamanli loadExpenses cagrilarinda
+    // (pagination spam, applyFilters + create/delete) eski fetch sonucu yeni
+    // state'i overwrite edemesin.
+    _loadToken: 0,
     _lastFilterMode: null,
     _lastFilterDateBlockHash: null,
 
@@ -510,15 +514,17 @@ window.ExpensesView = {
     },
 
     async loadExpenses() {
+        // STABILIZE (Faz S-A): inflight token ata, alt metodlara devret.
+        var token = ++this._loadToken;
         if (this.filters.mode === 'monthly') {
-            await this.loadMonthlyExpenses();
+            await this.loadMonthlyExpenses(token);
             return;
         }
 
-        await this.loadDailyExpenses();
+        await this.loadDailyExpenses(token);
     },
 
-    async loadDailyExpenses() {
+    async loadDailyExpenses(token) {
         var startDate = this.filters.startDate || null;
         var endDate = this.filters.endDate || null;
 
@@ -527,6 +533,9 @@ window.ExpensesView = {
             page: this.pagination.page,
             pageSize: this.pagination.pageSize
         });
+
+        // STABILIZE (Faz S-A): daha yeni bir load basladiysa commit etme.
+        if (token !== undefined && token !== this._loadToken) return;
 
         this.expenses = res.data || [];
         this.groupedMonthlyExpenses = [];
@@ -540,11 +549,14 @@ window.ExpensesView = {
         }
     },
 
-    async loadMonthlyExpenses() {
+    async loadMonthlyExpenses(token) {
         var result = await window.ExpensesService.getMonthlySummary(
             this.pagination.page,
             this.pagination.pageSize
         );
+
+        // STABILIZE (Faz S-A): daha yeni bir load basladiysa commit etme.
+        if (token !== undefined && token !== this._loadToken) return;
 
         var rows = result.data || [];
         this.expenses = [];

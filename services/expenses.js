@@ -285,9 +285,24 @@ window.ExpensesService = (function () {
 
         if (error) throw new Error(error.message || 'Aylık gider özeti alınamadı');
 
+        // FIX (Aylık görünüm bug): get_monthly_expense_summary RPC sözleşmesi
+        // güncellenmiş ama bu mapping eski 007 sözleşmesinde kalmıştı.
+        // Gerçek RPC payload'u: { rows:[{monthKey,totalAmount,recordCount,...}],
+        //   totalMonths, page, pageSize, totalPages }
+        // Eski kod data.data / data.count okuyordu → her zaman [] / 0 →
+        // "Aylık özet bulunamadı". View katmanı month/total/count bekliyor,
+        // bu yüzden satırlar burada o alan adlarına eşlenir.
+        const rows = (data?.rows || []).map(function (r) {
+            return {
+                month: r.monthKey,
+                total: Number(r.totalAmount) || 0,
+                count: Number(r.recordCount) || 0
+            };
+        });
+
         return {
-            data: data?.data || [],
-            count: data?.count || 0
+            data: rows,
+            count: data?.totalMonths || 0
         };
     }
 

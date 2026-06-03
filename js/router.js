@@ -128,8 +128,19 @@ window.Router = {
         }
         if(window.__DEBUG__)console.log('[Router] rendering view:', route.view);
 
+        // P0-A: mount-time instrumentation (yalnizca NOVA_DEBUG.enabled iken).
+        // Davranis/lifecycle DEGISMEZ; sadece sure olcumu. Disabled mode'da
+        // _nm=null → tum olcum dallari atlanir, overhead ~0.
+        var _nm = (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) ? window.NOVA_DEBUG : null;
+        var _pnow = function () {
+            return (window.performance && performance.now) ? performance.now() : Date.now();
+        };
+        var _tNav0 = _nm ? _pnow() : 0;
+
         // Destroy previous view
         this._destroyCurrentView();
+
+        var _tDestroyMs = _nm ? (_pnow() - _tNav0) : 0;
 
         window.STATE.currentView = hash;
 
@@ -159,6 +170,8 @@ window.Router = {
 
         if (container) {
             container.innerHTML = '';
+
+            var _tRender0 = _nm ? _pnow() : 0;
             viewObj.render(container);
 
             if (typeof viewObj.init === 'function') {
@@ -166,6 +179,20 @@ window.Router = {
             }
 
             this.currentViewInstance = viewObj;
+
+            // P0-A: senkron mount maliyetini kaydet (destroy + render-sync +
+            // total). render() AWAIT EDILMEZ — lifecycle korunur; bu yuzden
+            // "render" = senkron DOM build suresi, async veri fetch'i degil
+            // (o RpcObserver p95'te). recordTiming disabled mode'da no-op.
+            if (_nm && _nm.view && typeof _nm.view.recordTiming === 'function') {
+                var _tRenderMs = _pnow() - _tRender0;
+                var _tTotalMs  = _pnow() - _tNav0;
+                _nm.view.recordTiming(hash, {
+                    destroy: _tDestroyMs,
+                    render:  _tRenderMs,
+                    total:   _tTotalMs
+                });
+            }
         }
     },
 

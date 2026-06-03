@@ -244,6 +244,18 @@
         view: {
             renders: {},
             active:  null,
+
+            // ─── MOUNT TIMING (Faz P0-A) ──────────────────────
+            // Router.navigate() recordTiming() ile besler. Disabled mode'da
+            // recordTiming erken doner → overhead ~0. Davranis DEGISMEZ;
+            // sadece sure olcumu. "render" = senkron mount maliyeti (DOM
+            // build); async veri fetch'i BURADA degil, RpcObserver p95'te.
+            _timings:     {},   // name -> { count, sumMs, maxMs, lastMs, lastDestroyMs, lastRenderMs }
+            lastMountMs:  0,    // son mount toplam suresi (global)
+            _globalCount: 0,
+            _globalSum:   0,
+            _globalMax:   0,
+
             track: function (name) {
                 // KRITIK: disabled mode'da bu fn cagrilir ama erken donus.
                 if (!window.NOVA_DEBUG.enabled) return;
@@ -251,10 +263,75 @@
                 this.renders[name] = (this.renders[name] || 0) + 1;
                 this.active = name;
             },
+
+            // Router navigate timing kaydi. metrics: { destroy, render, total } (ms)
+            recordTiming: function (name, metrics) {
+                if (!window.NOVA_DEBUG.enabled) return;
+                if (!name || !metrics) return;
+                var total   = Number(metrics.total)   || 0;
+                var destroy = Number(metrics.destroy) || 0;
+                var render  = Number(metrics.render)  || 0;
+
+                var t = this._timings[name] || {
+                    count: 0, sumMs: 0, maxMs: 0, lastMs: 0,
+                    lastDestroyMs: 0, lastRenderMs: 0
+                };
+                t.count        += 1;
+                t.sumMs        += total;
+                t.lastMs        = total;
+                if (total > t.maxMs) t.maxMs = total;
+                t.lastDestroyMs = destroy;
+                t.lastRenderMs  = render;
+                this._timings[name] = t;
+
+                this.lastMountMs   = total;
+                this._globalCount += 1;
+                this._globalSum   += total;
+                if (total > this._globalMax) this._globalMax = total;
+            },
+
+            // Internal: timing ozetini hesapla (console side-effect YOK).
+            _computeTimings: function () {
+                var perView = {};
+                var keys = Object.keys(this._timings);
+                for (var i = 0; i < keys.length; i++) {
+                    var t = this._timings[keys[i]];
+                    perView[keys[i]] = {
+                        count:         t.count,
+                        lastMs:        Math.round(t.lastMs),
+                        avgMs:         t.count ? Math.round(t.sumMs / t.count) : 0,
+                        maxMs:         Math.round(t.maxMs),
+                        lastDestroyMs: Math.round(t.lastDestroyMs),
+                        lastRenderMs:  Math.round(t.lastRenderMs)
+                    };
+                }
+                return {
+                    lastMountMs: Math.round(this.lastMountMs),
+                    avgMountMs:  this._globalCount ? Math.round(this._globalSum / this._globalCount) : 0,
+                    maxMountMs:  Math.round(this._globalMax),
+                    perView:     perView
+                };
+            },
+
+            // Console-friendly: per-view tabloyu basar + ozeti dondurur.
+            timings: function () {
+                var out = this._computeTimings();
+                if (window.console && console.table) {
+                    try { console.table(out.perView); } catch (e) { /* noop */ }
+                }
+                return out;
+            },
+
             reset: function () {
                 this.renders = {};
                 this.active = null;
+                this._timings = {};
+                this.lastMountMs = 0;
+                this._globalCount = 0;
+                this._globalSum = 0;
+                this._globalMax = 0;
             },
+
             snapshot: function () {
                 var total = 0;
                 var keys = Object.keys(this.renders);
@@ -262,7 +339,8 @@
                 return {
                     renders: Object.assign({}, this.renders),
                     active:  this.active,
-                    total:   total
+                    total:   total,
+                    timings: this._computeTimings()
                 };
             }
         },

@@ -24,6 +24,8 @@ window.ExpensesView = {
     // (pagination spam, applyFilters + create/delete) eski fetch sonucu yeni
     // state'i overwrite edemesin.
     _loadToken: 0,
+    // PERF (Faz P2-A): SWR background-revalidate guard.
+    _revalidating: false,
     _lastFilterMode: null,
     _lastFilterDateBlockHash: null,
 
@@ -65,9 +67,14 @@ window.ExpensesView = {
                        ':' + (this.filters.startDate || '') +
                        ':' + (this.filters.endDate || '') +
                        ':' + (this.pagination.page || 1);
-        if (window.ViewCache) {
-            var cached = window.ViewCache.get(cacheKey);
-            if (cached) {
+        // PERF (Faz P2-A): SWR — getWithMeta stale data'yi SILMEZ.
+        //   fresh → cache hit (eski davranis)
+        //   stale → INSTANT render + arkada sessiz revalidate (loading flash yok)
+        //   yok   → cold path (asagidaki loading skeleton + full load)
+        if (window.ViewCache && window.ViewCache.getWithMeta) {
+            var meta = window.ViewCache.getWithMeta(cacheKey);
+            if (meta && meta.data) {
+                var cached = meta.data;
                 this.categories = cached.categories || [];
                 this.expenses = cached.expenses || [];
                 this.groupedMonthlyExpenses = cached.groupedMonthlyExpenses || [];
@@ -77,6 +84,8 @@ window.ExpensesView = {
                     this.bindEvents();
                 } catch (e) { /* render hatası varsa cache'i bypass eder */ }
                 if (this.expenses.length || this.groupedMonthlyExpenses.length || this.categories.length) {
+                    // Stale ise arkada sessiz revalidate — mevcut DOM ekranda kalir.
+                    if (meta.stale) this._revalidateExpenses(cacheKey);
                     return;
                 }
             }
@@ -573,6 +582,33 @@ window.ExpensesView = {
         this.pagination.totalCount = totalMonths;
         this.pagination.from = totalMonths === 0 ? 0 : ((this.pagination.page - 1) * this.pagination.pageSize) + 1;
         this.pagination.to = Math.min(this.pagination.page * this.pagination.pageSize, totalMonths);
+    },
+
+    // PERF (Faz P2-A): SWR background revalidate. Stale cache INSTANT render
+    // edildikten sonra sessizce fresh expense fetch + partial DOM update
+    // (_softUpdate → loading flash yok). loadExpenses S-A inflight token ile
+    // korunur; _revalidating duplicate fetch engeller. View destroy / filtre
+    // degisimi durumunda commit etmez (token mismatch + _isActive guard).
+    _revalidateExpenses(cacheKey) {
+        if (this._revalidating) return;
+        this._revalidating = true;
+        var self = this;
+        Promise.resolve()
+            .then(function () { return self.loadExpenses(); })
+            .then(function () {
+                self._revalidating = false;
+                if (!self._isActive) return;
+                self._softUpdate();
+                if (window.ViewCache) {
+                    window.ViewCache.set(cacheKey, {
+                        categories: self.categories,
+                        expenses: self.expenses,
+                        groupedMonthlyExpenses: self.groupedMonthlyExpenses,
+                        pagination: Object.assign({}, self.pagination)
+                    }, 60 * 1000);
+                }
+            })
+            .catch(function () { self._revalidating = false; });
     },
 
     groupExpensesByMonth(rows) {
@@ -1868,6 +1904,8 @@ window.ExpensesView = {
         this.expenses = [];
         this.groupedMonthlyExpenses = [];
         this.pendingDeleteId = null;
+        // PERF (Faz P2-A): SWR revalidate guard'i sifirla.
+        this._revalidating = false;
     },
 
     async confirmDeleteExpense() {

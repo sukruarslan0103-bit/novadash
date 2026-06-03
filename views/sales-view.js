@@ -27,6 +27,9 @@ window.SalesView = {
     // sadece en yeni cagri state commit eder (stale overwrite / last-finisher
     // -wins korumasi).
     _loadToken: 0,
+    // PERF (Faz P2-A): SWR background-revalidate guard. Stale cache render
+    // edildikten sonra arkada TEK fresh fetch calissin (duplicate engeli).
+    _revalidating: false,
 
     async render(container) {
         // NOVA_DEBUG (Faz O1-A): view render tracker
@@ -285,6 +288,8 @@ window.SalesView = {
         this._monthlyRowsCache = null;
         this._monthlyRowsCacheRev = -1;
         this._salesRev = 0;
+        // PERF (Faz P2-A): SWR revalidate guard'i sifirla — yeni mount fresh.
+        this._revalidating = false;
     },
 
     bindEvents() {
@@ -415,13 +420,16 @@ window.SalesView = {
         // eski load state COMMIT ETMEZ → stale overwrite cozulur.
         var token = ++this._loadToken;
 
-        // Gerçek cache kontrolü
-        if (!forceRefresh && window.ViewCache) {
-            var cached = window.ViewCache.get(fetchKey);
-            if (cached) {
+        // PERF (Faz P2-A): SWR — getWithMeta stale data'yi SILMEZ (get() siler).
+        //   fresh → cache hit (eski davranis, loading flash yok)
+        //   stale → INSTANT render + arkada sessiz revalidate (loading yok)
+        //   yok   → cold path (asagidaki try → ilk gercek yukleme)
+        if (!forceRefresh && window.ViewCache && window.ViewCache.getWithMeta) {
+            var meta = window.ViewCache.getWithMeta(fetchKey);
+            if (meta && meta.data) {
                 await this.loadProducts();
                 if (!this._isActive || token !== this._loadToken) return;
-                this._applyCachedPayload(cached, fetchKey);
+                this._applyCachedPayload(meta.data, fetchKey);
                 // PERF (Faz 2.3): Data versiyonu artir — render guard'lar
                 // (renderTable sig, getMonthlyRows memo) bunu okuyor.
                 this._salesRev = (this._salesRev || 0) + 1;
@@ -429,6 +437,20 @@ window.SalesView = {
                 this.renderTable();
 
                 this.clearStatus();
+
+                // Stale ise: arkada TEK sessiz fresh fetch. Stale data zaten
+                // ekranda; yeni veri gelince renderTable sig-guard ile in-place
+                // degisir. loadData(true) S-A inflight token + _isActive
+                // korumali → user filtre/pagination yaparsa stale revalidate
+                // commit etmez (token mismatch).
+                if (meta.stale && !this._revalidating) {
+                    this._revalidating = true;
+                    var selfSwr = this;
+                    Promise.resolve()
+                        .then(function () { return selfSwr.loadData(true); })
+                        .then(function () { selfSwr._revalidating = false; })
+                        .catch(function () { selfSwr._revalidating = false; });
+                }
                 return;
             }
         }

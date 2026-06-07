@@ -27,9 +27,10 @@ window.SalesView = {
     // sadece en yeni cagri state commit eder (stale overwrite / last-finisher
     // -wins korumasi).
     _loadToken: 0,
-    // PERF (Faz P2-A): SWR background-revalidate guard. Stale cache render
-    // edildikten sonra arkada TEK fresh fetch calissin (duplicate engeli).
-    _revalidating: false,
+    // PERF (Faz P2-A/B): SWR background-revalidate guard. Ayni view-state
+    // (fetchKey) icin TEK background fetch calissin diye o key'i tutar; null
+    // = aktif revalidate yok. Farkli key bloklanmaz (filtre degisince refresh).
+    _revalidatingKey: null,
 
     async render(container) {
         // NOVA_DEBUG (Faz O1-A): view render tracker
@@ -288,8 +289,8 @@ window.SalesView = {
         this._monthlyRowsCache = null;
         this._monthlyRowsCacheRev = -1;
         this._salesRev = 0;
-        // PERF (Faz P2-A): SWR revalidate guard'i sifirla — yeni mount fresh.
-        this._revalidating = false;
+        // PERF (Faz P2-A/B): SWR revalidate guard'i sifirla — yeni mount fresh.
+        this._revalidatingKey = null;
     },
 
     bindEvents() {
@@ -420,42 +421,35 @@ window.SalesView = {
         // eski load state COMMIT ETMEZ → stale overwrite cozulur.
         var token = ++this._loadToken;
 
-        // PERF (Faz P2-A): SWR — getWithMeta stale data'yi SILMEZ (get() siler).
-        //   fresh → cache hit (eski davranis, loading flash yok)
-        //   stale → INSTANT render + arkada sessiz revalidate (loading yok)
-        //   yok   → cold path (asagidaki try → ilk gercek yukleme)
-        if (!forceRefresh && window.ViewCache && window.ViewCache.getWithMeta) {
-            var meta = window.ViewCache.getWithMeta(fetchKey);
-            if (meta && meta.data) {
-                await this.loadProducts();
-                if (!this._isActive || token !== this._loadToken) return;
-                this._applyCachedPayload(meta.data, fetchKey);
-                // PERF (Faz 2.3): Data versiyonu artir — render guard'lar
-                // (renderTable sig, getMonthlyRows memo) bunu okuyor.
-                this._salesRev = (this._salesRev || 0) + 1;
-                this.renderSummary();
-                this.renderTable();
-
-                this.clearStatus();
-
-                // Stale ise: arkada TEK sessiz fresh fetch. Stale data zaten
-                // ekranda; yeni veri gelince renderTable sig-guard ile in-place
-                // degisir. loadData(true) S-A inflight token + _isActive
-                // korumali → user filtre/pagination yaparsa stale revalidate
-                // commit etmez (token mismatch).
-                if (meta.stale && !this._revalidating) {
-                    this._revalidating = true;
-                    var selfSwr = this;
-                    Promise.resolve()
-                        .then(function () { return selfSwr.loadData(true); })
-                        .then(function () { selfSwr._revalidating = false; })
-                        .catch(function () { selfSwr._revalidating = false; });
-                }
-                return;
-            }
-        }
-
         try {
+            // PERF (Faz P2-A/B): SWR — getWithMeta stale data'yi SILMEZ.
+            //   fresh → cache hit (loading flash yok)
+            //   stale → INSTANT render + arkada SESSIZ revalidate (loading yok)
+            //   yok   → cold path (ilk gercek yukleme; loading normal)
+            // STABILIZE (P2-B): SWR okuma try icine alindi — applyCachedPayload
+            // / render throw ederse catch yakalar, "Yükleniyor" asili KALMAZ.
+            if (!forceRefresh && window.ViewCache && window.ViewCache.getWithMeta) {
+                var meta = window.ViewCache.getWithMeta(fetchKey);
+                if (meta && meta.data) {
+                    await this.loadProducts();
+                    if (!this._isActive || token !== this._loadToken) return;
+                    this._applyCachedPayload(meta.data, fetchKey);
+                    // PERF (Faz 2.3): Data versiyonu artir — render guard'lar
+                    // (renderTable sig, getMonthlyRows memo) bunu okuyor.
+                    this._salesRev = (this._salesRev || 0) + 1;
+                    this.renderSummary();
+                    this.renderTable();
+                    this.clearStatus();
+
+                    // Stale → arkada sessiz revalidate. _revalidateSales:
+                    //   - _loadToken'a DOKUNMAZ (foreground load'lari ezmez)
+                    //   - commit'i fetchKey esitligine baglar (view-state degistiyse iptal)
+                    //   - hata/empty durumunda SESSIZ kalir (stale ekranda durur)
+                    if (meta.stale) this._revalidateSales(fetchKey);
+                    return;
+                }
+            }
+
             await this.loadProducts();
             if (!this._isActive || token !== this._loadToken) return;
 
@@ -474,13 +468,13 @@ window.SalesView = {
 
             if (!this._isActive || token !== this._loadToken) return;
 
-            if (result.error) {
+            if (!result || result.error) {
                 this.salesData = [];
                 this.productSalesData = [];
                 this.totalCount = 0;
                 this.totalPages = 0;
                 this._costMap = new Map();
-                this.setStatus(this.getErrorMessage(result.error, 'Satış verileri yüklenemedi.'), 'error');
+                this.setStatus(this.getErrorMessage(result && result.error, 'Satış verileri yüklenemedi.'), 'error');
                 this.renderTable();
                 return;
             }
@@ -524,6 +518,65 @@ window.SalesView = {
             this._costMap = new Map();
             this.setStatus('Satışlar yüklenirken beklenmeyen hata oluştu.', 'error');
             this.renderTable();
+        }
+    },
+
+    // STABILIZE (Faz P2-B): SESSIZ background revalidate (deterministik).
+    // Tasarim kurallari:
+    //   1) _loadToken'a DOKUNMAZ → foreground load'lari asla ezmez/iptal etmez.
+    //   2) Veriyi LOCAL degiskenlere ceker; paylasilan state'i (salesData /
+    //      _kpiTotals) yalnizca COMMIT aninda yazar.
+    //   3) Commit yalnizca view-state hala AYNI ise yapilir: _buildFetchKey()
+    //      === yakalanan fetchKey (tenant/filtre/sayfa/mod/pageSize ayni).
+    //   4) Hata/empty → SESSIZ; stale veri ekranda kalir, UI bozulmaz.
+    //   5) _revalidatingKey ayni view-state icin TEK background fetch garantisi
+    //      (farkli key bloklanmaz → filtre degisince refresh calisir).
+    async _revalidateSales(fetchKey) {
+        if (this._revalidatingKey === fetchKey) return;
+        this._revalidatingKey = fetchKey;
+        try {
+            await this.loadProducts();
+            if (!this._isActive || this._buildFetchKey() !== fetchKey) return;
+
+            var result = (this.viewMode === 'daily')
+                ? await window.SalesService.getByDateRange(
+                      this.filterStart, this.filterEnd,
+                      { page: this.currentPage, pageSize: this.pageSize })
+                : await window.SalesService.getByDateRange(
+                      this.filterStart, this.filterEnd);
+
+            if (!this._isActive || this._buildFetchKey() !== fetchKey) return;
+            if (!result || result.error) return;   // SESSIZ — stale ekranda kalir
+
+            var sales = Array.isArray(result.data) ? result.data : [];
+            var totalCount = result.count || sales.length;
+            var totalPages = result.totalPages || 1;
+
+            var kpi = null;
+            if (this.viewMode === 'daily') {
+                kpi = await this._computeKpiTotals();   // local, yan etki yok
+                if (!this._isActive || this._buildFetchKey() !== fetchKey) return;
+            }
+
+            // ---- COMMIT (yalnizca view-state hala ayni ise) ----
+            this.salesData = sales;
+            this.totalCount = totalCount;
+            this.totalPages = totalPages;
+            this._kpiTotals = (this.viewMode === 'daily') ? kpi : null;
+            this._costMap = new Map();
+            this._lastFetchKey = fetchKey;
+            this._saveToCache(fetchKey);
+            this._salesRev = (this._salesRev || 0) + 1;
+            this.renderSummary();
+            this.renderTable();
+            this.clearStatus();
+        } catch (e) {
+            // SESSIZ — background hata UI'yi bozmaz; stale veri ekranda kalir.
+            if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) {
+                console.warn('[SalesView] silent revalidate skip:', e);
+            }
+        } finally {
+            if (this._revalidatingKey === fetchKey) this._revalidatingKey = null;
         }
     },
 
@@ -704,15 +757,17 @@ window.SalesView = {
         return result;
     },
 
-    async loadKpiTotals() {
-        this._kpiTotals = null;
-
+    // STABILIZE (Faz P2-B): yan-etkisiz KPI hesabi. {totalRevenue,totalCost}
+    // veya null doner; this._kpiTotals'a YAZMAZ. Foreground loadKpiTotals()
+    // wrapper'i this._kpiTotals'a yazar; background revalidate ise locale
+    // alip yalnizca commit aninda yazar (paylasilan state'i kirletmez).
+    async _computeKpiTotals() {
         try {
             const salesRes = await window.SalesService.getAllByDateRange(
                 this.filterStart, this.filterEnd
             );
 
-            if (salesRes.error || !Array.isArray(salesRes.data)) return;
+            if (salesRes.error || !Array.isArray(salesRes.data)) return null;
 
             const allSales = salesRes.data;
             const saleIds = allSales.map(s => s.id).filter(Boolean);
@@ -748,11 +803,15 @@ window.SalesView = {
                 }
             }
 
-            this._kpiTotals = { totalRevenue, totalCost };
+            return { totalRevenue, totalCost };
         } catch (err) {
             console.error('KPI totals load error:', err);
-            this._kpiTotals = null;
+            return null;
         }
+    },
+
+    async loadKpiTotals() {
+        this._kpiTotals = await this._computeKpiTotals();
     },
 
     renderSummary() {

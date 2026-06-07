@@ -24,8 +24,9 @@ window.ExpensesView = {
     // (pagination spam, applyFilters + create/delete) eski fetch sonucu yeni
     // state'i overwrite edemesin.
     _loadToken: 0,
-    // PERF (Faz P2-A): SWR background-revalidate guard.
-    _revalidating: false,
+    // PERF (Faz P2-A/B): SWR background-revalidate guard. Ayni view-state
+    // (cacheKey) icin TEK background fetch; null = aktif revalidate yok.
+    _revalidatingKey: null,
     _lastFilterMode: null,
     _lastFilterDateBlockHash: null,
 
@@ -584,21 +585,74 @@ window.ExpensesView = {
         this.pagination.to = Math.min(this.pagination.page * this.pagination.pageSize, totalMonths);
     },
 
-    // PERF (Faz P2-A): SWR background revalidate. Stale cache INSTANT render
-    // edildikten sonra sessizce fresh expense fetch + partial DOM update
-    // (_softUpdate → loading flash yok). loadExpenses S-A inflight token ile
-    // korunur; _revalidating duplicate fetch engeller. View destroy / filtre
-    // degisimi durumunda commit etmez (token mismatch + _isActive guard).
+    // STABILIZE (Faz P2-B): view-state imzasi — mode + tarih + sayfa + pageSize.
+    // Background revalidate commit'i bu imza degismediyse yapilir (filtre/sayfa
+    // degistiyse stale fetch UI'yi bozmaz).
+    _stateSig() {
+        return [
+            this.filters.mode,
+            this.filters.startDate || '',
+            this.filters.endDate || '',
+            this.pagination.page,
+            this.pagination.pageSize
+        ].join('|');
+    },
+
+    // STABILIZE (Faz P2-B): SESSIZ + deterministik background revalidate.
+    //   1) loadExpenses()'i KULLANMAZ → paylasilan this.expenses'i mid-flight
+    //      ezmez; veriyi LOCAL ceker, yalnizca commit aninda yazar.
+    //   2) Hata/empty → SESSIZ; stale veri ekranda kalir (UI bozulmaz).
+    //   3) Commit yalnizca view-state imzasi (_stateSig) ayni ise yapilir.
+    //   4) _revalidatingKey ayni key icin TEK background; farkli key bloklanmaz.
     _revalidateExpenses(cacheKey) {
-        if (this._revalidating) return;
-        this._revalidating = true;
+        if (this._revalidatingKey === cacheKey) return;
+        this._revalidatingKey = cacheKey;
         var self = this;
-        Promise.resolve()
-            .then(function () { return self.loadExpenses(); })
-            .then(function () {
-                self._revalidating = false;
-                if (!self._isActive) return;
-                self._softUpdate();
+        var sig = this._stateSig();
+        var isMonthly = this.filters.mode === 'monthly';
+        var page = this.pagination.page;
+        var pageSize = this.pagination.pageSize;
+
+        var fetchP = isMonthly
+            ? window.ExpensesService.getMonthlySummary(page, pageSize)
+            : window.ExpensesService.getByDateRange(
+                  this.filters.startDate || null, this.filters.endDate || null,
+                  { ascending: false, page: page, pageSize: pageSize });
+
+        Promise.resolve(fetchP)
+            .then(function (res) {
+                if (!self._isActive || self._stateSig() !== sig) return;
+                if (!res || res.error) return;   // SESSIZ — stale ekranda kalir
+
+                var pag;
+                if (isMonthly) {
+                    var months = res.data || [];
+                    var totalMonths = Number(res.count || 0);
+                    var totalPages = Math.max(1, Math.ceil(totalMonths / pageSize));
+                    self.expenses = [];
+                    self.groupedMonthlyExpenses = months;
+                    pag = {
+                        totalPages: totalPages,
+                        totalCount: totalMonths,
+                        from: totalMonths === 0 ? 0 : ((page - 1) * pageSize) + 1,
+                        to: Math.min(page * pageSize, totalMonths)
+                    };
+                } else {
+                    var tp = Number(res.totalPages || 1);
+                    if (tp < 1) tp = 1;
+                    self.expenses = res.data || [];
+                    self.groupedMonthlyExpenses = [];
+                    pag = {
+                        totalPages: tp,
+                        totalCount: Number(res.count || 0),
+                        from: Number(res.from || 0),
+                        to: Number(res.to || 0)
+                    };
+                }
+                self.pagination = Object.assign({}, self.pagination, pag);
+
+                self._softUpdate();   // partial DOM update — loading flash yok
+
                 if (window.ViewCache) {
                     window.ViewCache.set(cacheKey, {
                         categories: self.categories,
@@ -608,7 +662,15 @@ window.ExpensesView = {
                     }, 60 * 1000);
                 }
             })
-            .catch(function () { self._revalidating = false; });
+            .catch(function (e) {
+                // SESSIZ — stale veri ekranda kalir.
+                if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) {
+                    console.warn('[ExpensesView] silent revalidate skip:', e);
+                }
+            })
+            .then(function () {
+                if (self._revalidatingKey === cacheKey) self._revalidatingKey = null;
+            });
     },
 
     groupExpensesByMonth(rows) {
@@ -1904,8 +1966,8 @@ window.ExpensesView = {
         this.expenses = [];
         this.groupedMonthlyExpenses = [];
         this.pendingDeleteId = null;
-        // PERF (Faz P2-A): SWR revalidate guard'i sifirla.
-        this._revalidating = false;
+        // PERF (Faz P2-A/B): SWR revalidate guard'i sifirla.
+        this._revalidatingKey = null;
     },
 
     async confirmDeleteExpense() {

@@ -534,18 +534,10 @@ window.ProductsView = {
             this.initPurchase();
 
             // === CACHE WRITE ===
-            if (window.ViewCache) {
-                var perfEntries = [];
-                if (this.performanceMap && typeof this.performanceMap.forEach === 'function') {
-                    this.performanceMap.forEach(function (v, k) { perfEntries.push([k, v]); });
-                }
-                window.ViewCache.set(cacheKey, {
-                    products: this.products || [],
-                    filteredProducts: this.filteredProducts || this.products || [],
-                    categories: this.categories || [],
-                    performanceEntries: perfEntries
-                }, 60 * 1000); // 60s TTL
-            }
+            // STABILIZE (Faz P3): cache yazimi artik _loadProductPerformanceAsync
+            // icinde (perf hazirken) yapilir. Burada yazsaydik performanceMap bos
+            // olurdu (perf background'da) → revisit cache-hit perf'siz kalirdi.
+            // Perf gelince _writeProductsCache() tam snapshot yazar.
         }
 
         // PERF: data refresh listener'lari TEK SEFER bind. render() her
@@ -670,23 +662,13 @@ window.ProductsView = {
             var perfEnd = window.Formatters && typeof window.Formatters.today === 'function'
                 ? window.Formatters.today() : null;
 
-            var perfPromise;
-            if (window.AnalyticsService && typeof window.AnalyticsService.getProductPerformanceSummary === 'function') {
-                perfPromise = window.AnalyticsService.getProductPerformanceSummary(perfStart, perfEnd)
-                    .then(function (data) { return { data: data, error: null }; })
-                    .catch(function (err) { return { data: [], error: err }; });
-            } else {
-                perfPromise = Promise.resolve({ data: [], error: null });
-            }
-
-            var results = await Promise.all([
-                window.ProductsService.getAll(),
-                perfPromise
-            ]);
+            // STABILIZE (Faz P3): URUN LISTESINI HEMEN BAS — performance summary
+            // (getProductPerformanceSummary) beklemeden. Eskiden Promise.all ile
+            // tablo, agir perf sorgusunu bekliyordu. Artik once products getAll,
+            // tablo aninda render; perf (revenue/profit kolonlari + insight
+            // kartlari) AYRI background'da hesaplanir.
+            var productResult = await window.ProductsService.getAll();
             if (!this._isActive) return;
-
-            var productResult = results[0];
-            var performanceResult = results[1];
 
             if (productResult.error) {
                 tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:24px; color:#dc2626;">Ürünler yüklenirken hata oluştu.</td></tr>';
@@ -695,28 +677,99 @@ window.ProductsView = {
             }
 
             this.products = Array.isArray(productResult.data) ? productResult.data : [];
+            // perf henuz yok → bos map (perf kolonlari background gelene kadar 0).
             this.performanceMap = new Map();
-
-            if (!performanceResult.error && Array.isArray(performanceResult.data)) {
-                for (var i = 0; i < performanceResult.data.length; i++) {
-                    var item = performanceResult.data[i];
-                    if (item && item.product_id) {
-                        this.performanceMap.set(String(item.product_id), item);
-                    }
-                }
-            }
 
             // PERF (Faz 2.2): Data versiyonu artir → applyFiltersAndRender
             // signature mismatch yapsin, stale filter sonucu reuse edilmesin.
             this._productsRev = (this._productsRev || 0) + 1;
+            var rev = this._productsRev;
 
             this.pagination.page = 1;
-            this.applyFiltersAndRender();
-            this._renderProductInsights();
+            this.applyFiltersAndRender();   // TABLO HEMEN
+
+            // performance + insights → BACKGROUND (tablo beklemez, sessiz dolar)
+            this._loadProductPerformanceAsync(perfStart, perfEnd, rev);
         } catch (error) {
             tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; padding:24px; color:#dc2626;">Beklenmeyen hata oluştu.</td></tr>';
             this.setStatus(this.getErrorMessage(error, 'Ürünler yüklenirken beklenmeyen hata oluştu.'), 'error');
         }
+    },
+
+    // STABILIZE (Faz P3): ASENKRON performance + insight yukleme. Tabloyu
+    // bloklamaz. Perf geldiginde: performanceMap doldurulur, tablo perf
+    // kolonlariyla yeniden basilir, insight kartlari render edilir ve
+    // ViewCache (perf dahil) yazilir → sonraki ziyaret cache'den instant.
+    // Race korumasi:
+    //   - rev (_productsRev) esitligi: yeni loadProducts supersede ettiyse iptal
+    //   - _isActive: view destroy edildiyse no-op
+    //   - _perfInflight: tek background perf fetch
+    //   - hata → tablo/perf 0 kalir ama insight yine render (stale silinmez)
+    _loadProductPerformanceAsync: function (perfStart, perfEnd, rev) {
+        var self = this;
+
+        if (!(window.AnalyticsService &&
+              typeof window.AnalyticsService.getProductPerformanceSummary === 'function')) {
+            // Perf servisi yok → insight'i bos perf ile yine de goster + cache.
+            if (self._isActive && rev === self._productsRev) {
+                self._renderProductInsights();
+                self._writeProductsCache();
+            }
+            return;
+        }
+
+        if (this._perfInflight) return;
+        this._perfInflight = true;
+
+        window.AnalyticsService.getProductPerformanceSummary(perfStart, perfEnd)
+            .then(function (data) {
+                if (!self._isActive || rev !== self._productsRev) return;
+
+                var map = new Map();
+                if (Array.isArray(data)) {
+                    for (var i = 0; i < data.length; i++) {
+                        var item = data[i];
+                        if (item && item.product_id) {
+                            map.set(String(item.product_id), item);
+                        }
+                    }
+                }
+                self.performanceMap = map;
+
+                // Tabloyu perf kolonlariyla yeniden bas (sig invalidate) + insight + cache.
+                self._lastTableRenderSig = null;
+                self.renderTable();
+                self._renderProductInsights();
+                self._writeProductsCache();
+            })
+            .catch(function () {
+                // Perf hata → tablo perf kolonlari 0 kalir; insight yine render
+                // edilsin (stale silinmez, bos ekran olmaz).
+                if (!self._isActive || rev !== self._productsRev) return;
+                self._renderProductInsights();
+            })
+            .then(function () {
+                self._perfInflight = false;
+            });
+    },
+
+    // ViewCache'e tam snapshot yaz (products + filtered + categories + perf).
+    // Perf background'da geldigi icin cache yazimi artik BURADA (perf hazirken)
+    // yapilir → cache her zaman perf-dolu, revisit instant.
+    _writeProductsCache: function () {
+        if (!window.ViewCache) return;
+        var tid = (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || '';
+        var cacheKey = 'products-view:' + tid;
+        var perfEntries = [];
+        if (this.performanceMap && typeof this.performanceMap.forEach === 'function') {
+            this.performanceMap.forEach(function (v, k) { perfEntries.push([k, v]); });
+        }
+        window.ViewCache.set(cacheKey, {
+            products: this.products || [],
+            filteredProducts: this.filteredProducts || this.products || [],
+            categories: this.categories || [],
+            performanceEntries: perfEntries
+        }, 60 * 1000);
     },
 
     applyFiltersAndRender: function () {
@@ -2411,6 +2464,8 @@ window.ProductsView = {
         this._filteredLenAtSig = null;
         this._lastTableRenderSig = null;
         this._productsRev = 0;
+        // PERF (Faz P3): background perf guard'i sifirla.
+        this._perfInflight = false;
     },
 
     initPurchase: function () {

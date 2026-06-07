@@ -31,6 +31,9 @@ window.SalesView = {
     // (fetchKey) icin TEK background fetch calissin diye o key'i tutar; null
     // = aktif revalidate yok. Farkli key bloklanmaz (filtre degisince refresh).
     _revalidatingKey: null,
+    // PERF (Faz P3): KPI/totals background hesabi icin tek-ucus guard'i
+    // (ayni view-state icin tek arka plan KPI fetch). null = aktif yok.
+    _kpiInflightKey: null,
 
     async render(container) {
         // NOVA_DEBUG (Faz O1-A): view render tracker
@@ -291,6 +294,8 @@ window.SalesView = {
         this._salesRev = 0;
         // PERF (Faz P2-A/B): SWR revalidate guard'i sifirla — yeni mount fresh.
         this._revalidatingKey = null;
+        // PERF (Faz P3): KPI background guard'i sifirla.
+        this._kpiInflightKey = null;
     },
 
     bindEvents() {
@@ -489,11 +494,14 @@ window.SalesView = {
 
             if (!this._isActive || token !== this._loadToken) return;
 
-            if (this.viewMode === 'daily') {
-                await this.loadKpiTotals();
-                if (!this._isActive || token !== this._loadToken) return;
-            } else {
-                this._kpiTotals = null;
+            // STABILIZE (Faz P3): TABLOYU HEMEN BAS — KPI/totals beklemeden.
+            // Eskiden burada `await loadKpiTotals()` vardi (getAllByDateRange +
+            // product_sales chunk zinciri) ve renderTable'i blokluyordu. Artik
+            // tablo aninda basilir; daily KPI/totals AYRI background'da hesaplanir
+            // (_loadKpiTotalsAsync) ve renderSummary ile soft guncellenir.
+            // daily'de mevcut _kpiTotals (ayni aralik) korunur → flicker yok.
+            if (this.viewMode !== 'daily') {
+                this._kpiTotals = null;   // monthly: KPI row-sum'dan gelir
             }
 
             this._lastFetchKey = fetchKey;
@@ -506,6 +514,11 @@ window.SalesView = {
             this.renderTable();
 
             this.clearStatus();
+
+            // KPI/totals → BACKGROUND (yalnizca daily). Tablo beklemez.
+            if (this.viewMode === 'daily') {
+                this._loadKpiTotalsAsync(fetchKey, token);
+            }
         } catch (err) {
             console.error('Sales load error:', err);
             // STABILIZE (Faz S-A): stale/iptal edilmis load'in hata state'i
@@ -812,6 +825,33 @@ window.SalesView = {
 
     async loadKpiTotals() {
         this._kpiTotals = await this._computeKpiTotals();
+    },
+
+    // STABILIZE (Faz P3): KPI/totals'i ASENKRON background'da hesapla + soft
+    // render. Tabloyu bloklamaz. Race korumasi:
+    //   - _kpiInflightKey: ayni view-state icin TEK background KPI
+    //   - fetchKey esitligi: filtre/sayfa/mod degistiyse commit etme
+    //   - token: foreground load supersede ettiyse commit etme
+    //   - _isActive: view destroy edildiyse no-op
+    //   - hata/null → mevcut KPI/fallback korunur (stale silinmez)
+    async _loadKpiTotalsAsync(fetchKey, token) {
+        if (this._kpiInflightKey === fetchKey) return;
+        this._kpiInflightKey = fetchKey;
+        try {
+            var kpi = await this._computeKpiTotals();
+            if (!this._isActive) return;
+            if (this._buildFetchKey() !== fetchKey) return;
+            if (token != null && token !== this._loadToken) return;
+            if (kpi == null) return;   // hata → fallback korunur
+            this._kpiTotals = kpi;
+            this.renderSummary();      // soft KPI text update (renderTable'a dokunmaz)
+        } catch (e) {
+            if (window.NOVA_DEBUG && window.NOVA_DEBUG.enabled) {
+                console.warn('[SalesView] KPI bg skip:', e);
+            }
+        } finally {
+            if (this._kpiInflightKey === fetchKey) this._kpiInflightKey = null;
+        }
     },
 
     renderSummary() {

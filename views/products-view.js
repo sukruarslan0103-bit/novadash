@@ -5685,11 +5685,13 @@ window.ProductsView = {
                 var eNetUnit2, eLineTotal2;
                 if (eVatIncluded) {
                     eNetUnit2 = eu2 / eVatMul2;
-                    eLineTotal2 = eq2 * eu2 * eDMul2; // = eq2 * eNetUnit2 * eDMul2 * eVatMul2
                 } else {
                     eNetUnit2 = eu2;
-                    eLineTotal2 = eq2 * eu2 * eDMul2 * eVatMul2;
                 }
+                // FIX (KDV/contract): line_total = KDV HARIC (kural 11). Trigger
+                // VAT'i 1 KEZ ekler → double-VAT engellenir. Hem UPDATE hem
+                // edit-new path bu eLineTotal2'yi kullanir. Net birim uzerinden.
+                eLineTotal2 = eq2 * eNetUnit2 * eDMul2;
 
                 // WAC: rowNetPost = eq2 * eNetUnit2 * eDMul2 ; rowFinalNet = rowNetPost * eFactor
                 // base_unit_cost = rowFinalNet / eq2 = eNetUnit2 * eDMul2 * eFactor
@@ -5982,11 +5984,14 @@ window.ProductsView = {
             var netUnit, lineTotal;
             if (vatIncluded) {
                 netUnit   = u / vatMul;
-                lineTotal = q * u * dMul;
             } else {
                 netUnit   = u;
-                lineTotal = q * u * dMul * vatMul;
             }
+            // FIX (KDV/contract): line_total = KDV HARIC (net, iskonto sonrasi,
+            // vergi oncesi) — docs/FINANCE.md kural 11. Trigger base_unit_cost
+            // uretirken VAT'i 1 KEZ ekler; line_total KDV-dahil gonderilirse
+            // double-VAT olur (100 → 120). Net birim uzerinden hesapla.
+            lineTotal = q * netUnit * dMul;
 
             var sRowNetPost = q * netUnit * dMul;
             var sRowFinalNet = sRowNetPost * sFactor;

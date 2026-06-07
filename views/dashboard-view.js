@@ -1041,6 +1041,34 @@ window.DashboardView = {
         this._listeners = [];
     },
 
+    // P1-A: KEEP-ALIVE deactivate. View detach ediliyor — DOM/state/listener
+    // KORUNUR (cachedData, _eventsBound, _listeners, _lastRenderedSig dokunulmaz).
+    // Yalnizca Chart.js instance'lari serbest birakilir (detached canvas Chart.js
+    // sorununu onler). destroy DEGILDIR. activate'te chart'lar lazy re-init edilir.
+    deactivate() {
+        this._isActive = false;
+        try { window.destroyChart('salesChart'); } catch (e) { /* noop */ }
+        try { window.destroyChart('expenseChart'); } catch (e) { /* noop */ }
+        this._lastSalesSig = null;
+        this._lastExpenseSig = null;
+    },
+
+    // P1-A: KEEP-ALIVE activate. Node yeniden attach edildi; render() ÇAĞRILMAZ.
+    // DOM zaten yerinde → instant. Chart'lar reattach edilen canvas uzerinde
+    // cachedData'dan lazy re-init edilir (deterministik: once destroy sonra create).
+    activate(container) {
+        this._isActive = true;
+        if (container) this.container = container;
+        if (this.cachedData) {
+            try { window.destroyChart('salesChart'); } catch (e) { /* noop */ }
+            try { window.destroyChart('expenseChart'); } catch (e) { /* noop */ }
+            this._lastSalesSig = null;
+            this._lastExpenseSig = null;
+            this.renderSalesChart(this.cachedData);
+            this.renderExpenseChart(this.cachedData);
+        }
+    },
+
     destroy() {
         this._isActive = false;
         this._removeAllListeners();

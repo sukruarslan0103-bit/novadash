@@ -47,6 +47,17 @@ window.Router = {
     _initialized: false,
     _loginHandlers: null,
 
+    // === P1-A: KEEP-ALIVE (detached view cache) ===
+    // Pilot kapsami: yalnizca dashboard. Diger view'lar eski destroy/render
+    // lifecycle'inda kalir (fallback). Ayni anda DOM'da TEK aktif view bulunur
+    // (global getElementById ID collision korumasi). Inaktif keep-alive view'in
+    // DOM node'u + scroll + instance RAM'de saklanir.
+    _keepAliveRoutes: { dashboard: true },
+    _detached: {},            // route -> { node, scrollY, instance }
+    _activeNode: null,        // su an #viewContainer icinde attach olan keep-alive wrapper
+    _activeKeepRoute: null,   // attach olan keep-alive route adi (varsa)
+    _keepAliveTenant: null,   // detached cache hangi tenant'a ait (cross-tenant guard)
+
     init() {
         // hashchange listener: yalnizca tek sefer bind et
         if (!this._hashBound) {
@@ -101,6 +112,8 @@ window.Router = {
             }
 
             this._destroyCurrentView();
+            // P1-A: logout / unauth → keep-alive cache FULL PURGE (veri sizintisi YASAK)
+            this._purgeKeepAlive();
             this.renderLogin();
             return;
         }
@@ -137,63 +150,195 @@ window.Router = {
         };
         var _tNav0 = _nm ? _pnow() : 0;
 
-        // Destroy previous view
-        this._destroyCurrentView();
-
-        var _tDestroyMs = _nm ? (_pnow() - _tNav0) : 0;
-
-        window.STATE.currentView = hash;
-
-        // Show topbar and sub-header (login'de gizlenmiş olabilir)
-        this.setAppChrome(true);
-
-        // Update active nav link in topbar
-        document.querySelectorAll('.nav-link').forEach(item => {
-            item.classList.toggle('active', item.dataset.view === hash);
-        });
-
-        // Destroy chart instances
-        Object.keys(window.STATE.charts).forEach(key => {
-            window.destroyChart(key);
-        });
-
-        // Close mobile menu if open
-        const nav = document.getElementById('topbarNav');
-        if (nav) nav.classList.remove('open');
-
-        // Render
-        const container = document.getElementById('viewContainer');
+        // === P1-A: KEEP-ALIVE LIFECYCLE ===
+        var container = document.getElementById('viewContainer');
         if (!container) {
             console.error('[Router] #viewContainer bulunamadı');
             return;
         }
 
-        if (container) {
+        // Cross-tenant guard: detached cache baska tenant'a aitse FULL PURGE
+        // (DOM/scroll/state sizintisi YASAK).
+        if (this._keepAliveTenant !== null &&
+            this._keepAliveTenant !== this._currentTenantId()) {
+            this._purgeKeepAlive();
+        }
+
+        var prevHash = window.STATE.currentView;
+        var incomingKeep = !!this._keepAliveRoutes[hash];
+
+        // --- OUTGOING: keep-alive ise DETACH (RAM), degilse DESTROY ---
+        this._suspendCurrent(prevHash, container);
+        var _tDestroyMs = _nm ? (_pnow() - _tNav0) : 0;
+
+        window.STATE.currentView = hash;
+
+        // Chrome + nav active + mobile menu kapama (her gecis icin)
+        this.setAppChrome(true);
+        document.querySelectorAll('.nav-link').forEach(function (item) {
+            item.classList.toggle('active', item.dataset.view === hash);
+        });
+        var navEl = document.getElementById('topbarNav');
+        if (navEl) navEl.classList.remove('open');
+
+        // --- INCOMING ---
+
+        // (A) Keep-alive + cache HIT → REATTACH (render YOK, instant)
+        if (incomingKeep && this._detached[hash]) {
+            var entry = this._detached[hash];
+            delete this._detached[hash];
+
+            // Onceki legacy view DOM'u #viewContainer'da kalmis olabilir
+            // (legacy _suspendCurrent innerHTML temizlemez). Reattach oncesi
+            // temizle → ayni anda TEK view DOM'da (ID collision korumasi).
+            // Detached node container'da DEGIL → silinmez.
             container.innerHTML = '';
+            container.appendChild(entry.node);
+            this._activeNode = entry.node;
+            this._activeKeepRoute = hash;
+            this.currentViewInstance = entry.instance;
 
-            var _tRender0 = _nm ? _pnow() : 0;
-            viewObj.render(container);
-
-            if (typeof viewObj.init === 'function') {
-                viewObj.init(container);
+            if (entry.instance && typeof entry.instance.activate === 'function') {
+                try { entry.instance.activate(entry.node); }
+                catch (e) { console.error('[Router] activate error:', e); }
             }
+            this._restoreScroll(entry.scrollY);
 
-            this.currentViewInstance = viewObj;
-
-            // P0-A: senkron mount maliyetini kaydet (destroy + render-sync +
-            // total). render() AWAIT EDILMEZ — lifecycle korunur; bu yuzden
-            // "render" = senkron DOM build suresi, async veri fetch'i degil
-            // (o RpcObserver p95'te). recordTiming disabled mode'da no-op.
+            // P0-A: reattach timing — render=0 (RENDER BYPASS).
             if (_nm && _nm.view && typeof _nm.view.recordTiming === 'function') {
-                var _tRenderMs = _pnow() - _tRender0;
-                var _tTotalMs  = _pnow() - _tNav0;
                 _nm.view.recordTiming(hash, {
                     destroy: _tDestroyMs,
-                    render:  _tRenderMs,
-                    total:   _tTotalMs
+                    render:  0,
+                    total:   _pnow() - _tNav0
                 });
             }
+            if (window.__DEBUG__) console.log('[Router] keep-alive REATTACH:', hash);
+            return;
         }
+
+        // (B) Keep-alive + cache MISS → ilk mount (dedicated detachable wrapper)
+        if (incomingKeep) {
+            var wrapper = document.createElement('div');
+            wrapper.setAttribute('data-keepalive-view', hash);
+            container.innerHTML = '';
+            container.appendChild(wrapper);
+            this._activeNode = wrapper;
+            this._activeKeepRoute = hash;
+            this._keepAliveTenant = this._currentTenantId();
+
+            var _tR0 = _nm ? _pnow() : 0;
+            viewObj.render(wrapper);
+            if (typeof viewObj.init === 'function') viewObj.init(wrapper);
+            this.currentViewInstance = viewObj;
+
+            if (_nm && _nm.view && typeof _nm.view.recordTiming === 'function') {
+                _nm.view.recordTiming(hash, {
+                    destroy: _tDestroyMs,
+                    render:  _pnow() - _tR0,
+                    total:   _pnow() - _tNav0
+                });
+            }
+            return;
+        }
+
+        // (C) Legacy view → #viewContainer'a direkt render (eski davranis)
+        container.innerHTML = '';
+        this._activeNode = null;
+        this._activeKeepRoute = null;
+
+        var _tR0b = _nm ? _pnow() : 0;
+        viewObj.render(container);
+        if (typeof viewObj.init === 'function') viewObj.init(container);
+        this.currentViewInstance = viewObj;
+
+        if (_nm && _nm.view && typeof _nm.view.recordTiming === 'function') {
+            _nm.view.recordTiming(hash, {
+                destroy: _tDestroyMs,
+                render:  _pnow() - _tR0b,
+                total:   _pnow() - _tNav0
+            });
+        }
+    },
+
+    /* ============================================================
+       P1-A: KEEP-ALIVE HELPERS
+    ============================================================ */
+
+    // Outgoing view'i askiya al: keep-alive ise DETACH (RAM'de sakla, destroy
+    // ETME), degilse gercek DESTROY + (eski davranis) blanket chart teardown.
+    _suspendCurrent(prevHash, container) {
+        var inst = this.currentViewInstance;
+        var wasKeep = !!(prevHash && this._keepAliveRoutes[prevHash]);
+
+        if (wasKeep && inst && this._activeNode && container.contains(this._activeNode)) {
+            // DETACH — state/DOM/listener KORUNUR. deactivate yalnizca chart vb.
+            // gorsel kaynaklari serbest birakir.
+            var scrollY = this._captureScroll();
+            if (typeof inst.deactivate === 'function') {
+                try { inst.deactivate(); }
+                catch (e) { console.error('[Router] deactivate error:', e); }
+            }
+            if (this._activeNode.parentNode === container) {
+                container.removeChild(this._activeNode);
+            }
+            this._detached[prevHash] = {
+                node: this._activeNode,
+                scrollY: scrollY,
+                instance: inst
+            };
+            if (this._keepAliveTenant === null) {
+                this._keepAliveTenant = this._currentTenantId();
+            }
+            this._activeNode = null;
+            this._activeKeepRoute = null;
+            this.currentViewInstance = null;
+            return;
+        }
+
+        // LEGACY: gercek destroy + blanket chart teardown (eski navigate davranisi)
+        this._destroyCurrentView();
+        if (window.STATE && window.STATE.charts) {
+            Object.keys(window.STATE.charts).forEach(function (key) {
+                window.destroyChart(key);
+            });
+        }
+        this._activeNode = null;
+        this._activeKeepRoute = null;
+    },
+
+    // Detached view cache'i komple bosalt: her instance gercek destroy edilir,
+    // node referanslari + scroll temizlenir. Logout / tenant switch / unauth.
+    _purgeKeepAlive() {
+        var keys = Object.keys(this._detached);
+        for (var i = 0; i < keys.length; i++) {
+            var entry = this._detached[keys[i]];
+            if (!entry) continue;
+            if (entry.instance && typeof entry.instance.destroy === 'function') {
+                try { entry.instance.destroy(); }
+                catch (e) { console.error('[Router] keep-alive purge destroy error:', e); }
+            }
+            if (entry.node && entry.node.parentNode) {
+                entry.node.parentNode.removeChild(entry.node);
+            }
+            entry.node = null;
+            entry.instance = null;
+        }
+        this._detached = {};
+        this._activeNode = null;
+        this._activeKeepRoute = null;
+        this._keepAliveTenant = null;
+    },
+
+    _captureScroll() {
+        return window.pageYOffset || document.documentElement.scrollTop || 0;
+    },
+
+    _restoreScroll(y) {
+        try { window.scrollTo(0, y || 0); } catch (e) { /* noop */ }
+    },
+
+    _currentTenantId() {
+        return (window.STATE && window.STATE.tenant && window.STATE.tenant.id) || null;
     },
 
     _destroyCurrentView() {

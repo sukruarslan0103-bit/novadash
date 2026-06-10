@@ -5219,9 +5219,9 @@ window.ProductsView = {
         var dMul = 1 - (d / 100);   // iskonto carpani
         var vMul = 1 + (v / 100);   // kdv carpani
         var vatIncluded = !!this.purchaseState.vatIncluded;
-        // SECENEK A: _grossValue'lu satirda u KDV DAHİL'dir (autofill) — mod
-        // HARİÇ olsa bile bu satir DAHİL semantigiyle hesaplanir.
-        var effIncl = vatIncluded || !!line._grossValue;
+        // SECENEK A (revize): UI/display hesaplari YALNIZCA global mod ile calisir.
+        // _grossValue display'i ETKILEMEZ — o sadece save/WAC normalize icindir
+        // (puSaveAll + _puComputeWacFactor). HARİÇ mod gorunumu boylece bozulmaz.
 
         if (stateField === 'qty' || stateField === 'unitCost' || stateField === 'discount' || stateField === 'vat') {
             // Total'i unit'ten hesapla (eger lastEdited 'total' ise ve sadece vat/disc degisti -> unit'i yeniden hesapla)
@@ -5231,7 +5231,7 @@ window.ProductsView = {
                 var denom = vatIncluded ? (q * dMul) : (q * dMul * vMul);
                 if (denom > 0) line.unitCost = +(t / denom).toFixed(4);
             } else if (q > 0 && u > 0) {
-                var disp = effIncl ? (q * u * dMul) : (q * u * dMul * vMul);
+                var disp = vatIncluded ? (q * u * dMul) : (q * u * dMul * vMul);
                 line.total = +disp.toFixed(2);
             } else {
                 line.total = '';
@@ -5470,9 +5470,9 @@ window.ProductsView = {
             var d = parseFloat(l.discount) || 0;
             if (q <= 0 || u <= 0) return;
 
-            // SECENEK A: gross-bayrakli satir DAHİL semantigiyle normalize edilir.
-            var effIncl = vatIncluded || !!l._grossValue;
-            var netUnit = effIncl ? (u / (1 + v / 100)) : u;
+            // SECENEK A (revize): UI paneli YALNIZCA global mod ile hesaplanir.
+            // _grossValue burada KULLANILMAZ (yalnizca save/WAC normalize).
+            var netUnit = vatIncluded ? (u / (1 + v / 100)) : u;
             var brutNet = q * netUnit;
             var lineDisc = brutNet * (d / 100);
             var netAfter = brutNet - lineDisc;

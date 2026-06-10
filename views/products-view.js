@@ -4473,6 +4473,26 @@ window.ProductsView = {
     },
 
     /* ============================================================
+       F1/F2: BRÜT (KDV DAHİL) DISPLAY HELPER'LARI
+       Stored alanlar NET'tir (unit_cost / line_total = KDV HARİÇ, kural 10/11).
+       Is kurali: kullaniciya gosterilen her maliyet KDV DAHİL olmali.
+       base_unit_cost = line_total*(1+vat)/base_qty zaten KDV DAHİL → ayni mantik:
+         gross line = line_total * (1 + vat_rate/100)   (= base_unit_cost * base_quantity)
+         gross unit = unit_cost  * (1 + vat_rate/100)
+       NOT: stored alanlari DEGISTIRMEZ; yalnizca gosterim icin BRÜT dondurur.
+       ============================================================ */
+    _puGrossLine: function (item) {
+        var net = Number(item && item.line_total) || 0;
+        var vat = Number(item && item.vat_rate) || 0;
+        return net * (1 + vat / 100);
+    },
+    _puGrossUnit: function (item) {
+        var net = Number(item && item.unit_cost) || 0;
+        var vat = Number(item && item.vat_rate) || 0;
+        return net * (1 + vat / 100);
+    },
+
+    /* ============================================================
        INVOICE DETAIL — Detay butonu
        Tek invoice_no icin purchase_items satirlarini cek + modal goster
        ============================================================ */
@@ -4511,9 +4531,9 @@ window.ProductsView = {
                 ? new Date(rows[0].invoice_date).toLocaleDateString('tr-TR')
                 : '-';
 
-            // Genel Toplam — tum satirlarin line_total toplami
+            // Genel Toplam — tum satirlarin BRÜT (KDV DAHİL) toplami (F1)
             var grandTotal = rows.reduce(function (sum, r) {
-                return sum + (Number(r.line_total) || 0);
+                return sum + self._puGrossLine(r);
             }, 0);
 
             body.innerHTML =
@@ -4536,10 +4556,10 @@ window.ProductsView = {
                     return '<tr>' +
                         '<td style="font-weight:600;">' + name + '</td>' +
                         '<td style="text-align:right;">' + Number(r.quantity || 0) + (unit ? ' ' + unit : '') + '</td>' +
-                        '<td style="text-align:right;">' + self.formatMoney(r.unit_cost) + '</td>' +
+                        '<td style="text-align:right;">' + self.formatMoney(self._puGrossUnit(r)) + '</td>' +
                         '<td style="text-align:right; color:#b45309;">' + (Number(r.discount_rate) || 0) + '%</td>' +
                         '<td style="text-align:right; color:#6366f1;">%' + (Number(r.vat_rate) || 0) + '</td>' +
-                        '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(r.line_total) + '</td>' +
+                        '<td style="text-align:right; font-weight:700; color:#059669;">' + self.formatMoney(self._puGrossLine(r)) + '</td>' +
                     '</tr>';
                 }).join('') +
                 '</tbody>' +
@@ -5561,24 +5581,8 @@ window.ProductsView = {
     },
 
     puSaveAll: async function () {
-        // [DEBUG-DUP] RUNTIME DUPLICATE PROBE — kanit toplandiktan sonra REVERT.
-        // Tek "Faturayi Kaydet" aksiyonunda kac entry + hangi stack + guard
-        // state + DOM buton sayisi + branch. 2x insert_purchase_items_batch
-        // kaynagini lokalize eder.
-        try {
-            console.count('puSaveAll:ENTRY');
-            console.trace('puSaveAll TRACE');
-            console.log('[DEBUG-DUP] entry |',
-                '_savingPurchase=', this._savingPurchase,
-                '| purchaseState.saving=', this.purchaseState && this.purchaseState.saving,
-                '| #puSaveAllBtn DOM count=', document.querySelectorAll('#puSaveAllBtn').length,
-                '| #purchaseModal DOM count=', document.querySelectorAll('#purchaseModal').length,
-                '| editing=', !!(this.purchaseState && (this.purchaseState.editingInvoiceId || (this.purchaseState.editingOriginalIds || []).length)),
-                '| isSameSingleton=', (window.ProductsView === this));
-        } catch (e) { /* probe never blocks */ }
-
         // Re-entry guard: hızlı çift tık aynı faturayı 2 kez kaydetmesin
-        if (this._savingPurchase) { console.log('[DEBUG-DUP] BLOCKED by _savingPurchase guard'); return; }
+        if (this._savingPurchase) return;
         this._savingPurchase = true;
         try {
         if (this.purchaseState.saving) return;
@@ -5854,8 +5858,6 @@ window.ProductsView = {
                         eFail += editNewItems.length;
                         eLastErr = { message: 'Supabase RPC client yok' };
                     } else {
-                        console.count('insert_purchase_items_batch:RPC:EDIT'); // [DEBUG-DUP]
-                        console.trace('[DEBUG-DUP] RPC EDIT trace');           // [DEBUG-DUP]
                         if(window.__DEBUG__)console.log('[BATCH EDIT-NEW] RPC → insert_purchase_items_batch, satir:', editNewItems.length);
                         var bRes = await rpcCli2.rpc('insert_purchase_items_batch', {
                             p_items: editNewItems
@@ -6068,8 +6070,6 @@ window.ProductsView = {
                 console.error('[BATCH NEW] RPC client bulunamadi');
                 resp = { data: null, error: { message: 'Supabase RPC client yok' } };
             } else {
-                console.count('insert_purchase_items_batch:RPC:NEW'); // [DEBUG-DUP]
-                console.trace('[DEBUG-DUP] RPC NEW trace');           // [DEBUG-DUP]
                 if(window.__DEBUG__)console.log('[BATCH NEW] RPC → insert_purchase_items_batch, satir:', batchItems.length);
                 var rpcRes = await rpcClient.rpc('insert_purchase_items_batch', {
                     p_items: batchItems

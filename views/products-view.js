@@ -5561,8 +5561,24 @@ window.ProductsView = {
     },
 
     puSaveAll: async function () {
+        // [DEBUG-DUP] RUNTIME DUPLICATE PROBE — kanit toplandiktan sonra REVERT.
+        // Tek "Faturayi Kaydet" aksiyonunda kac entry + hangi stack + guard
+        // state + DOM buton sayisi + branch. 2x insert_purchase_items_batch
+        // kaynagini lokalize eder.
+        try {
+            console.count('puSaveAll:ENTRY');
+            console.trace('puSaveAll TRACE');
+            console.log('[DEBUG-DUP] entry |',
+                '_savingPurchase=', this._savingPurchase,
+                '| purchaseState.saving=', this.purchaseState && this.purchaseState.saving,
+                '| #puSaveAllBtn DOM count=', document.querySelectorAll('#puSaveAllBtn').length,
+                '| #purchaseModal DOM count=', document.querySelectorAll('#purchaseModal').length,
+                '| editing=', !!(this.purchaseState && (this.purchaseState.editingInvoiceId || (this.purchaseState.editingOriginalIds || []).length)),
+                '| isSameSingleton=', (window.ProductsView === this));
+        } catch (e) { /* probe never blocks */ }
+
         // Re-entry guard: hızlı çift tık aynı faturayı 2 kez kaydetmesin
-        if (this._savingPurchase) return;
+        if (this._savingPurchase) { console.log('[DEBUG-DUP] BLOCKED by _savingPurchase guard'); return; }
         this._savingPurchase = true;
         try {
         if (this.purchaseState.saving) return;
@@ -5838,6 +5854,8 @@ window.ProductsView = {
                         eFail += editNewItems.length;
                         eLastErr = { message: 'Supabase RPC client yok' };
                     } else {
+                        console.count('insert_purchase_items_batch:RPC:EDIT'); // [DEBUG-DUP]
+                        console.trace('[DEBUG-DUP] RPC EDIT trace');           // [DEBUG-DUP]
                         if(window.__DEBUG__)console.log('[BATCH EDIT-NEW] RPC → insert_purchase_items_batch, satir:', editNewItems.length);
                         var bRes = await rpcCli2.rpc('insert_purchase_items_batch', {
                             p_items: editNewItems
@@ -6050,6 +6068,8 @@ window.ProductsView = {
                 console.error('[BATCH NEW] RPC client bulunamadi');
                 resp = { data: null, error: { message: 'Supabase RPC client yok' } };
             } else {
+                console.count('insert_purchase_items_batch:RPC:NEW'); // [DEBUG-DUP]
+                console.trace('[DEBUG-DUP] RPC NEW trace');           // [DEBUG-DUP]
                 if(window.__DEBUG__)console.log('[BATCH NEW] RPC → insert_purchase_items_batch, satir:', batchItems.length);
                 var rpcRes = await rpcClient.rpc('insert_purchase_items_batch', {
                     p_items: batchItems

@@ -84,6 +84,9 @@ window.ProductsView = {
         purchasesAll: [],       // recent (server'dan çekilen tam liste, filtre öncesi)
         lines: [],              // draft invoice lines: [{_k, rmId, qty, unitCost, discount, vat, total, lastEdited}]
         saving: false,
+        saveKey: null,          // (b) idempotency: save-intent başına sabit UUID;
+                                // = note.invoice_id + p_idempotency_key. Form
+                                // mutasyonunda rotate, başarıda temizlenir, hatada korunur.
         vatIncluded: false,     // global toggle: fiyatlar KDV dahil mi?
         searchById: {},
         recipeOpen: false,
@@ -4925,6 +4928,7 @@ window.ProductsView = {
        MULTI-LINE INVOICE (ALIŞ)
        ============================================================ */
     puAddLine: function () {
+        this._puTouchForm();   // (b) satir ekle = form mutasyonu → saveKey rotate
         var k = this._puLineKey++;
         this.purchaseState.lines.push({
             _k: k,
@@ -4964,6 +4968,7 @@ window.ProductsView = {
     },
 
     puRemoveLine: function (k) {
+        this._puTouchForm();   // (b) satir sil = form mutasyonu → saveKey rotate
         this.purchaseState.lines = this.purchaseState.lines.filter(function (l) { return l._k !== k; });
         if (!this.purchaseState.lines.length) {
             this.puAddLine();
@@ -5021,7 +5026,16 @@ window.ProductsView = {
         this.puRecalcAll();
     },
 
+    // (b) idempotency: form mutasyonunda save-intent key'ini rotate et (sifirla).
+    // Bir sonraki kaydet yeni key uretir → degismis payload = yeni intent,
+    // backend IDEMPOTENCY_KEY_REUSE'a dusulmez. Save sirasinda cagrilmaz
+    // (puSaveAll flush _puComputeLine/puRecalcAll kullanir, puLineEdit degil).
+    _puTouchForm: function () {
+        if (this.purchaseState) this.purchaseState.saveKey = null;
+    },
+
     puLineEdit: function (k, field, value) {
+        this._puTouchForm();   // (b) form mutasyonu → saveKey rotate
         // Field alias: UI "unit" gönderiyor, state "unitCost" kullaniyor
         var stateField = (field === 'unit') ? 'unitCost' : field;
 
@@ -5328,6 +5342,8 @@ window.ProductsView = {
         if (!line) return;
         var m = this.purchaseState.rawMaterials.find(function (x) { return String(x.id) === String(rmId); });
         if (!m) return;
+
+        this._puTouchForm();   // (b) hammadde secimi = form mutasyonu → saveKey rotate
 
         line.rmId = m.id;
         line.rmName = m.name || '';
@@ -5987,7 +6003,10 @@ window.ProductsView = {
 
         // INVOICE — tüm satırlar aynı invoice_id + supplier + description ile
         // Genel iskonto artık note'ta DEĞİL, kolon olarak (general_discount_amount/type) tutulur
-        var invoiceId = this._puMakeInvoiceId();
+        // (b) idempotency: save-intent key. Yoksa uret; retry'da KORUNUR (ayni key
+        // → backend gate dedupe). invoice_id = saveKey → replay'de ayni invoice_no.
+        if (!this.purchaseState.saveKey) this.purchaseState.saveKey = this._puMakeInvoiceId();
+        var invoiceId = this.purchaseState.saveKey;
         var invoiceNote = this._puMakeNote(
             invoiceId,
             this.purchaseState.supplierName || null,
@@ -6098,7 +6117,8 @@ window.ProductsView = {
             } else {
                 if(window.__DEBUG__)console.log('[BATCH NEW] RPC → insert_purchase_items_batch, satir:', batchItems.length);
                 var rpcRes = await rpcClient.rpc('insert_purchase_items_batch', {
-                    p_items: batchItems
+                    p_items: batchItems,
+                    p_idempotency_key: this.purchaseState.saveKey   // (b) ledger gate
                 });
                 if(window.__DEBUG__)console.log('[BATCH NEW] RPC RESULT:', rpcRes);
                 if (rpcRes && rpcRes.error) {
@@ -6129,9 +6149,27 @@ window.ProductsView = {
         if (!this._isActive) return;
 
         if (fail > 0) {
-            this.puSetStatus(ok + ' kayıt eklendi, ' + fail + ' satır hata verdi. ' + this.getErrorMessage(lastErr, ''), 'error');
+            // (b) HATA: saveKey KORUNUR → retry ayni key ile gider, backend dedupe eder.
+            // Istisna IDEMPOTENCY_KEY_REUSE (ayni key farkli payload, hooklanmamis bir
+            // mutasyon): key'i rotate et → kullanici tekrar kaydedince taze key ile gider.
+            var errMsg = String((lastErr && (lastErr.message || lastErr.msg)) || '');
+            if (errMsg.indexOf('IDEMPOTENCY_KEY_REUSE') !== -1) {
+                this.purchaseState.saveKey = null;
+                this.puSetStatus('İçerik değişti, lütfen tekrar kaydedin.', 'error');
+            } else {
+                this.puSetStatus(ok + ' kayıt eklendi, ' + fail + ' satır hata verdi. ' + this.getErrorMessage(lastErr, ''), 'error');
+            }
         } else {
-            this.puSetStatus('Fatura kaydedildi (' + ok + ' satır). Ham madde maliyetleri otomatik güncellenecek.', 'success');
+            // (b) BASARI (success veya duplicate:true) → saveKey temizle (sonraki fatura
+            // yeni intent). duplicate:true = replay; kullaniciya hata gosterilmez.
+            this.purchaseState.saveKey = null;
+            var wasDup = !!(resp.data && resp.data.duplicate);
+            this.puSetStatus(
+                wasDup
+                    ? 'Fatura zaten kayıtlı (tekrar gönderim engellendi).'
+                    : 'Fatura kaydedildi (' + ok + ' satır). Ham madde maliyetleri otomatik güncellenecek.',
+                'success'
+            );
             this.purchaseState.lines = [];
             this.purchaseState.supplierName = '';
             this.purchaseState.description = '';

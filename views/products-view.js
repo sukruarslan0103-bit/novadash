@@ -5364,10 +5364,12 @@ window.ProductsView = {
         // PREFILL: ₺/base_unit (DB) → ₺/purchase_unit (kullanicinin gordugu)
         // SECENEK A: autofill HER ZAMAN BRÜT (raw_materials.cost = KDV DAHİL) koyar
         // — kullanici "son gercek alis maliyeti"ni gorur (global toggle DEGISMEZ).
-        // line._grossValue=true: bu degerin semantigi KDV DAHİL'dir; tum hesap
-        // noktalari effIncl = vatIncluded || _grossValue ile normalize eder →
+        // line._grossValue=true: bu degerin semantigi KDV DAHİL'dir. YALNIZCA
+        // save/WAC normalize bunu okur (puSaveAll new/edit + _puComputeWacFactor):
         // HARİÇ modda bile netUnit = u/(1+v) → line_total NET, base BRÜT,
-        // double-VAT yok. Kullanici unitCost'u elle degistirirse bayrak duser.
+        // double-VAT yok. UI/display hesaplari (_puComputeLine, puRecalcAll)
+        // bayragi OKUMAZ — plain vatIncluded (HARİÇ gorunum sozlesmesi).
+        // Kullanici unitCost'u elle degistirirse / total girerse bayrak duser.
         if (!line.unitCost) {
             var prefillGross = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
             if (prefillGross > 0) {

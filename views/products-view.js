@@ -5333,12 +5333,26 @@ window.ProductsView = {
         line.rmName = m.name || '';
         line.rmUnit = m.unit || '';
         // PREFILL: ₺/base_unit (DB) → ₺/purchase_unit (kullanicinin gordugu)
-        // F4: m.cost = raw_materials.cost = KDV DAHİL (BRÜT). Prefill BRÜT konur.
-        var forcedGross = false;
+        // F4.1: m.cost = raw_materials.cost = KDV DAHİL (BRÜT). Global toggle'i
+        // DEGISTIRMEDEN, prefill'i AKTIF moda gore normalize et:
+        //   - KDV DAHİL mod  → BRÜT degeri dogrudan koy
+        //   - KDV HARİÇ mod  → NET'e indir (gross / (1+vat/100)) → double-VAT yok
+        // Boylece toggle sabit kalir, onceden girilmis diger satirlar yeniden
+        // yorumlanmaz, kullanici modu korunur.
         if (!line.unitCost) {
-            var prefill = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
-            line.unitCost = prefill > 0 ? prefill : '';
-            forcedGross = prefill > 0;
+            var prefillGross = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
+            if (prefillGross > 0) {
+                if (this.purchaseState.vatIncluded) {
+                    line.unitCost = +prefillGross.toFixed(4);
+                } else {
+                    var pvRaw = m.vat_rate;
+                    var pv = (pvRaw == null || pvRaw === '') ? 20 : Number(pvRaw);
+                    if (!Number.isFinite(pv)) pv = 20;
+                    line.unitCost = +(prefillGross / (1 + pv / 100)).toFixed(4);
+                }
+            } else {
+                line.unitCost = '';
+            }
         }
 
         // ============================================================
@@ -5359,10 +5373,8 @@ window.ProductsView = {
             if(window.__DEBUG__)console.log('[puLineSelect] HM:', m.name, '| vat manuel degistirilmis, dokunulmadi. line.vat:', line.vat);
         }
 
-        // F4: prefill BRÜT (KDV DAHİL) geldigi icin toggle'i KDV-dahil moda al →
-        // gross deger NET gibi yorumlanip tekrar VAT bindirmesin (save /vatMul yapar).
-        // line.vat yukarida set edildi → recalc dogru oran kullanir.
-        if (forcedGross) this.puSetVatMode(true);
+        // F4.1: global VAT toggle DEGISTIRILMEZ — autofill aktif moda gore
+        // yukarida normalize edildi (puSetVatMode cagrisi kaldirildi).
 
         var dd = document.getElementById('puLineDropdown_' + k);
         if (dd) dd.style.display = 'none';

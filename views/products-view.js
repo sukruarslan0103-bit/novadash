@@ -5043,6 +5043,12 @@ window.ProductsView = {
         if (!line) return;
         line[stateField] = value;
 
+        // SECENEK A: kullanici unitCost'u ELLE degistirdi (veya total girdi →
+        // unitCost turetilecek) → deger artik MOD semantiginde; gross bayragi duser.
+        if (stateField === 'unitCost' || stateField === 'total') {
+            line._grossValue = false;
+        }
+
         var q = parseFloat(line.qty) || 0;
         var u = parseFloat(line.unitCost) || 0;
         var t = parseFloat(line.total) || 0;
@@ -5213,20 +5219,27 @@ window.ProductsView = {
         var dMul = 1 - (d / 100);   // iskonto carpani
         var vMul = 1 + (v / 100);   // kdv carpani
         var vatIncluded = !!this.purchaseState.vatIncluded;
+        // SECENEK A: _grossValue'lu satirda u KDV DAHİL'dir (autofill) — mod
+        // HARİÇ olsa bile bu satir DAHİL semantigiyle hesaplanir.
+        var effIncl = vatIncluded || !!line._grossValue;
 
         if (stateField === 'qty' || stateField === 'unitCost' || stateField === 'discount' || stateField === 'vat') {
             // Total'i unit'ten hesapla (eger lastEdited 'total' ise ve sadece vat/disc degisti -> unit'i yeniden hesapla)
             if (line.lastEdited === 'total' && stateField !== 'qty' && stateField !== 'unitCost' && q > 0 && t > 0) {
+                // total'dan TURETILEN unitCost mod-semantigindedir → bayrak duser.
+                line._grossValue = false;
                 var denom = vatIncluded ? (q * dMul) : (q * dMul * vMul);
                 if (denom > 0) line.unitCost = +(t / denom).toFixed(4);
             } else if (q > 0 && u > 0) {
-                var disp = vatIncluded ? (q * u * dMul) : (q * u * dMul * vMul);
+                var disp = effIncl ? (q * u * dMul) : (q * u * dMul * vMul);
                 line.total = +disp.toFixed(2);
             } else {
                 line.total = '';
             }
         } else if (stateField === 'total') {
             if (q > 0 && t > 0) {
+                // total'dan TURETILEN unitCost mod-semantigindedir → bayrak duser.
+                line._grossValue = false;
                 var denom2 = vatIncluded ? (q * dMul) : (q * dMul * vMul);
                 if (denom2 > 0) line.unitCost = +(t / denom2).toFixed(4);
             } else {
@@ -5349,23 +5362,17 @@ window.ProductsView = {
         line.rmName = m.name || '';
         line.rmUnit = m.unit || '';
         // PREFILL: ₺/base_unit (DB) → ₺/purchase_unit (kullanicinin gordugu)
-        // F4.1: m.cost = raw_materials.cost = KDV DAHİL (BRÜT). Global toggle'i
-        // DEGISTIRMEDEN, prefill'i AKTIF moda gore normalize et:
-        //   - KDV DAHİL mod  → BRÜT degeri dogrudan koy
-        //   - KDV HARİÇ mod  → NET'e indir (gross / (1+vat/100)) → double-VAT yok
-        // Boylece toggle sabit kalir, onceden girilmis diger satirlar yeniden
-        // yorumlanmaz, kullanici modu korunur.
+        // SECENEK A: autofill HER ZAMAN BRÜT (raw_materials.cost = KDV DAHİL) koyar
+        // — kullanici "son gercek alis maliyeti"ni gorur (global toggle DEGISMEZ).
+        // line._grossValue=true: bu degerin semantigi KDV DAHİL'dir; tum hesap
+        // noktalari effIncl = vatIncluded || _grossValue ile normalize eder →
+        // HARİÇ modda bile netUnit = u/(1+v) → line_total NET, base BRÜT,
+        // double-VAT yok. Kullanici unitCost'u elle degistirirse bayrak duser.
         if (!line.unitCost) {
             var prefillGross = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
             if (prefillGross > 0) {
-                if (this.purchaseState.vatIncluded) {
-                    line.unitCost = +prefillGross.toFixed(4);
-                } else {
-                    var pvRaw = m.vat_rate;
-                    var pv = (pvRaw == null || pvRaw === '') ? 20 : Number(pvRaw);
-                    if (!Number.isFinite(pv)) pv = 20;
-                    line.unitCost = +(prefillGross / (1 + pv / 100)).toFixed(4);
-                }
+                line.unitCost = +prefillGross.toFixed(4);
+                line._grossValue = true;
             } else {
                 line.unitCost = '';
             }
@@ -5407,6 +5414,13 @@ window.ProductsView = {
             if (sel && !line._vatTouched) {
                 sel.value = String(line.vat);
             }
+        }
+
+        // SECENEK A (opsiyonel hint): gross-bayrakli prefill'de input'a tooltip —
+        // UI/layout degismez, yalnizca title attribute.
+        if (line._grossValue) {
+            var uHintEl = document.getElementById('puLineUnit_' + k);
+            if (uHintEl) uHintEl.title = 'Son alış maliyeti — KDV DAHİL';
         }
     },
 
@@ -5456,7 +5470,9 @@ window.ProductsView = {
             var d = parseFloat(l.discount) || 0;
             if (q <= 0 || u <= 0) return;
 
-            var netUnit = vatIncluded ? (u / (1 + v / 100)) : u;
+            // SECENEK A: gross-bayrakli satir DAHİL semantigiyle normalize edilir.
+            var effIncl = vatIncluded || !!l._grossValue;
+            var netUnit = effIncl ? (u / (1 + v / 100)) : u;
             var brutNet = q * netUnit;
             var lineDisc = brutNet * (d / 100);
             var netAfter = brutNet - lineDisc;
@@ -5594,7 +5610,9 @@ window.ProductsView = {
                 rowsMeta.push({ key: l._k, q: q, netUnit: 0, rowNetPost: 0 });
                 return;
             }
-            var netUnit = vatIncluded ? (u / (1 + v / 100)) : u;
+            // SECENEK A: gross-bayrakli satir DAHİL semantigiyle normalize edilir.
+            var effIncl = vatIncluded || !!l._grossValue;
+            var netUnit = effIncl ? (u / (1 + v / 100)) : u;
             var rowNetPost = q * netUnit * (1 - d / 100);
             sumNetPost += rowNetPost;
             rowsMeta.push({ key: l._k, q: q, netUnit: netUnit, rowNetPost: rowNetPost });
@@ -5745,7 +5763,8 @@ window.ProductsView = {
                 var eVatMul2 = 1 + (ev2 / 100);
                 var eDMul2 = 1 - (ed2 / 100);
                 var eNetUnit2, eLineTotal2;
-                if (eVatIncluded) {
+                // SECENEK A: gross-bayrakli satir DAHİL semantigiyle normalize edilir.
+                if (eVatIncluded || el._grossValue) {
                     eNetUnit2 = eu2 / eVatMul2;
                 } else {
                     eNetUnit2 = eu2;
@@ -6047,7 +6066,8 @@ window.ProductsView = {
             var dMul = 1 - (d / 100);
 
             var netUnit, lineTotal;
-            if (vatIncluded) {
+            // SECENEK A: gross-bayrakli satir DAHİL semantigiyle normalize edilir.
+            if (vatIncluded || l._grossValue) {
                 netUnit   = u / vatMul;
             } else {
                 netUnit   = u;

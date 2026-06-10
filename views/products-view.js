@@ -4795,8 +4795,10 @@ window.ProductsView = {
         this.purchaseState.lines = [];
         this._puLineKey = (this._puLineKey || 1);
 
-        // KDV hariç moda zorla (unit_cost = net)
-        this.purchaseState.vatIncluded = false;
+        // F3: KDV DAHİL moda set et — display dili BRÜT. Stored unit_cost NET'tir;
+        // input'a BRÜT (×(1+vat)) konur, save path KDV-dahil modda /vatMul ile
+        // tekrar NET'e indirir → round-trip korunur, double-VAT olmaz.
+        this.purchaseState.vatIncluded = true;
 
         // Supplier & description restore
         this.purchaseState.supplierName = inv.supplier || '';
@@ -4864,6 +4866,10 @@ window.ProductsView = {
             var dMul = 1 - (d / 100);
             var vMul = 1 + (v / 100);
             var displayTotal = +(q * u * dMul * vMul).toFixed(2);
+            // F3: input'a BRÜT (KDV DAHİL) birim koy — stored unit_cost NET'tir.
+            // Toggle KDV-dahil (asagida puSetVatMode(true)); save path /vatMul ile
+            // tekrar NET'e indirdigi icin round-trip ve maliyet zinciri korunur.
+            var grossUnit = +(u * vMul).toFixed(4);
 
             self.purchaseState.lines.push({
                 _k: k,
@@ -4872,7 +4878,7 @@ window.ProductsView = {
                 rmName: rm.name || '',
                 rmUnit: it.unit || rm.unit || '',
                 qty: q,
-                unitCost: u,
+                unitCost: grossUnit,
                 discount: d,
                 total: displayTotal,
                 vat: v,
@@ -4900,7 +4906,7 @@ window.ProductsView = {
         var btn = document.getElementById('puSaveAllBtn');
         if (btn) btn.textContent = 'Faturayı Güncelle';
 
-        this.puSetVatMode(false);
+        this.puSetVatMode(true);   // F3: edit ekrani KDV DAHİL display
         this.puRenderLines();
         console.log('[POST_RENDER_LINES] purchaseState.lines =', this.purchaseState.lines.length, '| DOM .pu-line-row =', document.querySelectorAll('.pu-line-row').length);
 
@@ -5327,9 +5333,12 @@ window.ProductsView = {
         line.rmName = m.name || '';
         line.rmUnit = m.unit || '';
         // PREFILL: ₺/base_unit (DB) → ₺/purchase_unit (kullanicinin gordugu)
+        // F4: m.cost = raw_materials.cost = KDV DAHİL (BRÜT). Prefill BRÜT konur.
+        var forcedGross = false;
         if (!line.unitCost) {
             var prefill = this._puPurchaseUnitCost(m.cost, m.unit, m.base_unit || m.unit);
             line.unitCost = prefill > 0 ? prefill : '';
+            forcedGross = prefill > 0;
         }
 
         // ============================================================
@@ -5349,6 +5358,11 @@ window.ProductsView = {
         } else {
             if(window.__DEBUG__)console.log('[puLineSelect] HM:', m.name, '| vat manuel degistirilmis, dokunulmadi. line.vat:', line.vat);
         }
+
+        // F4: prefill BRÜT (KDV DAHİL) geldigi icin toggle'i KDV-dahil moda al →
+        // gross deger NET gibi yorumlanip tekrar VAT bindirmesin (save /vatMul yapar).
+        // line.vat yukarida set edildi → recalc dogru oran kullanir.
+        if (forcedGross) this.puSetVatMode(true);
 
         var dd = document.getElementById('puLineDropdown_' + k);
         if (dd) dd.style.display = 'none';

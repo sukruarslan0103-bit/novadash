@@ -161,6 +161,16 @@
     <script src="utils/validators.js?v=054"></script>
     <script src="utils/import-export.js?v=054"></script>
 
+    <!-- FAZ 2.1 IMPORT FOUNDATION (073-D binding)
+         Sira: SheetJS (satir 94) → import-parsers → import-view.
+         import-parsers SheetJS'e, import-view ise import-parsers +
+         SupabaseService (satir 158) + Toast (satir 99) bagimlidir. -->
+    <script src="utils/import-parsers.js?v=066"></script>
+    <script src="views/import-view.js?v=065"></script>
+    <!-- 075-C: Fatura Eslestirme ve Duzeltme (review) ekrani.
+         SupabaseService (158) + import-view sonrasi; products-view'dan once. -->
+    <script src="views/import-review-view.js?v=057"></script>
+
     <script src="services/sales.js?v=054"></script>
     <script src="services/expenses.js?v=054"></script>
     <script src="services/products.js?v=054"></script>
@@ -169,7 +179,7 @@
     <script src="views/dashboard-view.js?v=054"></script>
     <script src="views/sales-view.js?v=054"></script>
     <script src="views/expenses-view.js?v=054"></script>
-    <script src="views/products-view.js?v=054"></script>
+    <script src="views/products-view.js?v=058"></script>
     <script src="views/raw-materials-view.js?v=054"></script>
     <script src="views/stock-view.js?v=054"></script>
     <script src="views/health-view.js?v=054"></script>

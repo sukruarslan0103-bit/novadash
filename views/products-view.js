@@ -3594,14 +3594,32 @@ window.ProductsView = {
                     <h2 style="margin:0 0 6px 0;font-size:26px;font-weight:800;color:#0f172a;letter-spacing:-0.02em;">Alış Faturası</h2>
                     <p style="margin:0;color:#64748b;font-size:13.5px;">Yeni alış faturası oluşturun.</p>
                 </div>
-                <button id="puToggleFormBtn" type="button" style="
-                    border:none;background:#0f172a;color:#fff;padding:11px 18px;
-                    border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
-                    display:inline-flex;align-items:center;gap:8px;
-                ">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    <span id="puToggleFormBtnLabel">Yeni Alış Faturası</span>
-                </button>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <button id="puToggleFormBtn" type="button" style="
+                        border:none;background:#0f172a;color:#fff;padding:11px 18px;
+                        border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                        display:inline-flex;align-items:center;gap:8px;
+                    ">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        <span id="puToggleFormBtnLabel">Yeni Alış Faturası</span>
+                    </button>
+                    <button id="puImportBtn" type="button"
+                        onclick="
+                            if (window.ImportView && typeof window.ImportView.open === 'function') {
+                                window.ImportView.open();
+                            } else if (window.Toast) {
+                                window.Toast.error('Fatura yükleme ekranı yüklenemedi.');
+                            }
+                        "
+                        style="
+                        border:1px solid #cbd5e1;background:#fff;color:#0f172a;padding:11px 18px;
+                        border-radius:12px;font-weight:700;cursor:pointer;font-size:14px;
+                        display:inline-flex;align-items:center;gap:8px;
+                    ">
+                        <span aria-hidden="true">📄</span>
+                        <span>Fatura Yükle</span>
+                    </button>
+                </div>
             </div>
 
             <!-- INVOICE CARD (accordion) -->
